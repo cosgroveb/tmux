@@ -7539,6 +7539,9 @@ The following variables are available, where appropriate:
 .It Li "pane_private_modes" Ta "" Ta "List of enabled DECSET private modes"
 .It Li "pane_pb_state" Ta "" Ta "Pane progress bar state, one of hidden, normal, error, indeterminate, paused (can be set by application)"
 .It Li "pane_pb_progress" Ta "" Ta "Pane progress bar progress percentage (can be set by application)"
+.It Li "pane_program_status" Ta "" Ta "JSON snapshot of retained OSC 7501 records"
+.It Li "pane_program_status_revision" Ta "" Ta "Change counter for retained OSC 7501 records"
+.It Li "pane_program_status_states" Ta "" Ta "Sorted unique OSC 7501 states, separated by spaces"
 .It Li "pane_right" Ta "" Ta "Right of pane"
 .It Li "pane_search_string" Ta "" Ta "Last search string in copy mode"
 .It Li "pane_start_command" Ta "" Ta "Command pane started with"
@@ -7650,6 +7653,91 @@ The following variables are available, where appropriate:
 .It Li "window_zoomed_flag" Ta "" Ta "1 if window is zoomed"
 .It Li "wrap_flag" Ta "" Ta "Pane wrap flag"
 .El
+.Ss Program status
+.Nm
+retains program status reports sent by applications using OSC 7501 revision 0.4
+.Pq Lk https://www.superlogical.com/rex/docs/build/program-status .
+Reports replace the addressed record, including its optional fields.
+Records belong to the pane and follow it through moves and swaps.
+Primary and alternate screen changes and soft resets do not affect them.
+Process exit and OSC 133 A shell prompts remove
+.Ql working
+and
+.Ql blocked
+records, while
+.Ql idle ,
+.Ql done
+and
+.Ql error
+remain.
+Full resets and pane respawns remove all records.
+At most 256 records are retained, evicting the least recently updated record
+when a new record would exceed this limit.
+.Pp
+The
+.Ql pane_program_status
+format returns a compact, single-line JSON snapshot, for example:
+.Bd -literal -offset indent
+{"schema":1,"pane_id":"%3","revision":"7","records":[{"id":"","state":"done","app":"clnkr","effective_app":"clnkr"}]}
+.Ed
+The root record has an empty
+.Ql id .
+Records are sorted by id and contain their validated protocol fields.
+Optional fields are omitted when absent.
+.Ql progress
+is a number, and
+.Ql title
+and
+.Ql msg
+contain decoded UTF-8 text.
+.Ql app
+contains only an explicit application identifier.
+.Ql effective_app
+contains the explicit identifier or the nearest ancestor's identifier,
+and is omitted when neither exists.
+Treat record text as data, without evaluating it as formats or markup.
+.Pp
+The decimal
+.Ql revision
+is a JSON string to preserve its precision.
+It starts at zero and increases when retained records change, including clears,
+lifetime cleanup and eviction.
+It remains monotonic through resets and respawns of the same pane.
+An unchanged report refreshes eviction order without changing the revision.
+.Ql pane_program_status_revision
+returns the same counter.
+.Ql pane_program_status_states
+returns sorted, unique state names separated by spaces, or an empty string
+when there are no records.
+.Pp
+A control mode client can subscribe to snapshots for its attached session:
+.Bd -literal -offset indent
+refresh\-client \-B 'program-status:%*:#{pane_program_status}'
+.Ed
+The initial
+.Ic %subscription\-changed
+notifications contain current snapshots.
+Replace each cached pane snapshot with the complete received snapshot.
+Suppress alerts for initial snapshots, including after reconnecting.
+Scope pane ids to the server instance and connection endpoint, and rebuild the
+cache after reconnecting or restarting the server.
+Subscriptions sample at most once a second.
+A changed revision can reveal an intervening update, but does not identify or
+replay missed states.
+.Pp
+Both
+.Ql %*
+and explicit pane id subscriptions cover only the attached session.
+.Ql %*
+includes retained dead panes, while explicit pane id subscriptions skip them.
+Linked windows may produce multiple notifications for the same pane at
+different window indexes.
+Pane removal or movement out of the session does not send an empty snapshot.
+Reconcile the pane topology as it changes.
+For snapshots across all sessions, query:
+.Bd -literal -offset indent
+list\-panes \-a \-F '#{pane_program_status}'
+.Ed
 .Sh STYLES
 .Nm
 offers various options to specify the colour and attributes of aspects of the

@@ -379,6 +379,8 @@ server_destroy_pane(struct window_pane *wp, int notify)
 		wp->pipe_fd = -1;
 	}
 
+	/* Output has drained even if the exit status is still pending. */
+	program_status_end(wp);
 	if (~wp->flags & PANE_STATUSREADY)
 		return;
 	remain_on_exit = options_get_number(wp->options, "remain-on-exit");

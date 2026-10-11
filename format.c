@@ -993,6 +993,37 @@ format_cb_current_path(struct format_tree *ft)
 	return (xstrdup(cwd));
 }
 
+/* Callback for pane_program_status. */
+static void *
+format_cb_pane_program_status(struct format_tree *ft)
+{
+	if (ft->wp == NULL)
+		return (NULL);
+	return (program_status_json(ft->wp));
+}
+
+/* Callback for pane_program_status_revision. */
+static void *
+format_cb_pane_program_status_revision(struct format_tree *ft)
+{
+	char	*value;
+
+	if (ft->wp == NULL)
+		return (NULL);
+	xasprintf(&value, "%llu",
+	    (unsigned long long)program_status_revision(ft->wp));
+	return (value);
+}
+
+/* Callback for pane_program_status_states. */
+static void *
+format_cb_pane_program_status_states(struct format_tree *ft)
+{
+	if (ft->wp == NULL)
+		return (NULL);
+	return (program_status_state_names(ft->wp));
+}
+
 /* Callback for history_bytes. */
 static void *
 format_cb_history_bytes(struct format_tree *ft)
@@ -3944,6 +3975,15 @@ static const struct format_table_entry format_table[] = {
 	},
 	{ "pane_private_modes", FORMAT_TABLE_STRING,
 	  format_cb_pane_private_modes
+	},
+	{ "pane_program_status", FORMAT_TABLE_STRING,
+	  format_cb_pane_program_status
+	},
+	{ "pane_program_status_revision", FORMAT_TABLE_STRING,
+	  format_cb_pane_program_status_revision
+	},
+	{ "pane_program_status_states", FORMAT_TABLE_STRING,
+	  format_cb_pane_program_status_states
 	},
 	{ "pane_right", FORMAT_TABLE_STRING,
 	  format_cb_pane_right

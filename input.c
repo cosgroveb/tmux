@@ -133,6 +133,7 @@ struct input_ctx {
 	int				flags;
 #define INPUT_DISCARD 0x1
 #define INPUT_LAST 0x2
+#define INPUT_OSC_7501_ST 0x4
 
 	struct input_requests		 requests;
 	u_int				 request_count;
@@ -143,6 +144,7 @@ struct input_ctx {
 	 * control clients on connection.
 	 */
 	struct evbuffer			*since_ground;
+	size_t				 osc_start;
 	struct event			 ground_timer;
 };
 
@@ -173,6 +175,7 @@ static void	input_osc_110(struct input_ctx *, const char *);
 static void	input_osc_111(struct input_ctx *, const char *);
 static void	input_osc_112(struct input_ctx *, const char *);
 static void	input_osc_133(struct input_ctx *, const char *);
+static void	input_osc_7501(struct input_ctx *);
 
 /* Transition entry/exit handlers. */
 static void	input_clear(struct input_ctx *);
@@ -977,6 +980,13 @@ input_parse(struct input_ctx *ictx, const u_char *buf, size_t len)
 	while (off < len) {
 		ictx->ch = buf[off++];
 
+		if (ictx->flags & INPUT_OSC_7501_ST) {
+			ictx->flags &= ~INPUT_OSC_7501_ST;
+			if (ictx->ch == '\\' &&
+			    ictx->state == &input_state_esc_enter)
+				input_osc_7501(ictx);
+		}
+
 		/* Find the transition. */
 		if (ictx->state != state ||
 		    itr == NULL ||
@@ -1019,7 +1029,7 @@ input_parse(struct input_ctx *ictx, const u_char *buf, size_t len)
 
 		/* If not in ground state, save input. */
 		if (ictx->state != &input_state_ground)
-			evbuffer_add(ictx->since_ground, &ictx->ch, 1);
+			evbuffer_add(ictx->since_ground, buf + off - 1, 1);
 	}
 }
 
@@ -1403,6 +1413,8 @@ input_esc_dispatch(struct input_ctx *ictx)
 
 	switch (entry->type) {
 	case INPUT_ESC_RIS:
+		if (ictx->wp != NULL)
+			program_status_reset(ictx->wp);
 		colour_palette_clear(ictx->palette);
 		input_reset_cell(ictx);
 		screen_write_reset(sctx);
@@ -2685,9 +2697,14 @@ input_dcs_dispatch(struct input_ctx *ictx)
 static void
 input_enter_osc(struct input_ctx *ictx)
 {
+	size_t	 len = EVBUFFER_LENGTH(ictx->since_ground);
+
 	log_debug("%s", __func__);
 
 	input_clear(ictx);
+	ictx->osc_start = SIZE_MAX;
+	if (len != 0 && EVBUFFER_DATA(ictx->since_ground)[len - 1] == '\033')
+		ictx->osc_start = len - 1;
 	input_start_ground_timer(ictx);
 	ictx->flags &= ~INPUT_LAST;
 }
@@ -2770,10 +2787,48 @@ input_exit_osc(struct input_ctx *ictx)
 	case 133:
 		input_osc_133(ictx, p);
 		break;
+	case 7501:
+		input_osc_7501(ictx);
+		break;
 	default:
 		log_debug("%s: unknown '%u'", __func__, option);
 		break;
 	}
+}
+
+/* Use raw bytes and defer ST until its backslash actually arrives. */
+static void
+input_osc_7501(struct input_ctx *ictx)
+{
+	const u_char	*raw;
+	size_t		 len = EVBUFFER_LENGTH(ictx->since_ground);
+
+	if (ictx->osc_start > len)
+		return;
+	len -= ictx->osc_start;
+	if (len < 7 || len >= 4096)
+		return;
+	raw = EVBUFFER_DATA(ictx->since_ground) + ictx->osc_start;
+	if (memcmp(raw, "\033]7501;", 7) != 0)
+		return;
+	if (ictx->ch == '\033') {
+		if (len < 4095)
+			ictx->flags |= INPUT_OSC_7501_ST;
+		return;
+	}
+	if (ictx->ch == '\\') {
+		if (len < 8 || raw[len - 1] != '\033')
+			return;
+		len--;
+	} else if (ictx->ch != '\007')
+		return;
+	raw += 7;
+	len -= 7;
+	if (len == 1 && *raw == '?') {
+		input_reply(ictx, 1, "\033]7501;?:states=idle,working,done,"
+		    "blocked,error:kinds=permission,question,auth\033\\");
+	} else if (ictx->wp != NULL)
+		program_status_update(ictx->wp, raw, len);
 }
 
 /* APC string started. */
@@ -3282,6 +3337,8 @@ input_osc_133(struct input_ctx *ictx, const char *p)
 			gl->flags |= GRID_LINE_START_PROMPT;
 		}
 		if (wp != NULL) {
+			if (*p == 'A')
+				program_status_end(wp);
 			wp->last_prompt_time = time(NULL);
 			events_fire_pane("pane-shell-prompt", wp);
 		}

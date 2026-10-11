@@ -67,6 +67,7 @@ struct mouse_event;
 struct options;
 struct options_array_item;
 struct options_entry;
+struct program_status;
 struct prompt;
 struct window_pane_prompt;
 struct redraw_damage;
@@ -1399,6 +1400,7 @@ struct window_pane {
 	struct event	 sync_timer;
 
 	struct input_ctx *ictx;
+	struct program_status *program_status;
 
 	struct grid_cell cached_gc;
 	struct grid_cell cached_active_gc;
@@ -3446,6 +3448,15 @@ void	 input_reply_clipboard(struct bufferevent *, const char *, size_t,
 void	 input_set_buffer_size(size_t);
 void	 input_request_reply(struct client *, enum input_request_type, void *);
 void	 input_cancel_requests(struct client *);
+
+/* program-status.c */
+void	 program_status_update(struct window_pane *, const u_char *, size_t);
+void	 program_status_end(struct window_pane *);
+void	 program_status_reset(struct window_pane *);
+void	 program_status_free(struct window_pane *);
+uint64_t program_status_revision(struct window_pane *);
+char	*program_status_json(struct window_pane *);
+char	*program_status_state_names(struct window_pane *);
 
 /* input-key.c */
 void	 input_key_build(void);
