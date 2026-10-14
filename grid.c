@@ -854,34 +854,34 @@ grid_move_cells(struct grid *gd, u_int dx, u_int px, u_int py, u_int nx,
 	}
 }
 
-/* Get ANSI foreground sequence. */
+/* Get ANSI foreground or background sequence. */
 static size_t
-grid_string_cells_fg(const struct grid_cell *gc, int *values)
+grid_string_cells_colour(int colour, int bg, int *values)
 {
 	size_t	n;
 	u_char	r, g, b;
-	int	c;
+	int	c, offset = bg ? 10 : 0;
 
 	n = 0;
-	if (gc->fg & COLOUR_FLAG_THEME) {
-		c = colour_theme_terminal_colour(gc->fg & 0xff);
+	if (colour & COLOUR_FLAG_THEME) {
+		c = colour_theme_terminal_colour(colour & 0xff);
 		if (c == 8)
-			values[n++] = 39;
+			values[n++] = 39 + offset;
 		else
-			values[n++] = c + 30;
-	} else if (gc->fg & COLOUR_FLAG_256) {
-		values[n++] = 38;
+			values[n++] = c + 30 + offset;
+	} else if (colour & COLOUR_FLAG_256) {
+		values[n++] = 38 + offset;
 		values[n++] = 5;
-		values[n++] = gc->fg & 0xff;
-	} else if (gc->fg & COLOUR_FLAG_RGB) {
-		values[n++] = 38;
+		values[n++] = colour & 0xff;
+	} else if (colour & COLOUR_FLAG_RGB) {
+		values[n++] = 38 + offset;
 		values[n++] = 2;
-		colour_split_rgb(gc->fg, &r, &g, &b);
+		colour_split_rgb(colour, &r, &g, &b);
 		values[n++] = r;
 		values[n++] = g;
 		values[n++] = b;
 	} else {
-		switch (gc->fg) {
+		switch (colour) {
 		case 0:
 		case 1:
 		case 2:
@@ -890,10 +890,10 @@ grid_string_cells_fg(const struct grid_cell *gc, int *values)
 		case 5:
 		case 6:
 		case 7:
-			values[n++] = gc->fg + 30;
+			values[n++] = colour + 30 + offset;
 			break;
 		case 8:
-			values[n++] = 39;
+			values[n++] = 39 + offset;
 			break;
 		case 90:
 		case 91:
@@ -903,63 +903,7 @@ grid_string_cells_fg(const struct grid_cell *gc, int *values)
 		case 95:
 		case 96:
 		case 97:
-			values[n++] = gc->fg;
-			break;
-		}
-	}
-	return (n);
-}
-
-/* Get ANSI background sequence. */
-static size_t
-grid_string_cells_bg(const struct grid_cell *gc, int *values)
-{
-	size_t	n;
-	u_char	r, g, b;
-	int	c;
-
-	n = 0;
-	if (gc->bg & COLOUR_FLAG_THEME) {
-		c = colour_theme_terminal_colour(gc->bg & 0xff);
-		if (c == 8)
-			values[n++] = 49;
-		else
-			values[n++] = c + 40;
-	} else if (gc->bg & COLOUR_FLAG_256) {
-		values[n++] = 48;
-		values[n++] = 5;
-		values[n++] = gc->bg & 0xff;
-	} else if (gc->bg & COLOUR_FLAG_RGB) {
-		values[n++] = 48;
-		values[n++] = 2;
-		colour_split_rgb(gc->bg, &r, &g, &b);
-		values[n++] = r;
-		values[n++] = g;
-		values[n++] = b;
-	} else {
-		switch (gc->bg) {
-		case 0:
-		case 1:
-		case 2:
-		case 3:
-		case 4:
-		case 5:
-		case 6:
-		case 7:
-			values[n++] = gc->bg + 40;
-			break;
-		case 8:
-			values[n++] = 49;
-			break;
-		case 90:
-		case 91:
-		case 92:
-		case 93:
-		case 94:
-		case 95:
-		case 96:
-		case 97:
-			values[n++] = gc->bg + 10;
+			values[n++] = colour + offset;
 			break;
 		}
 	}
@@ -1131,14 +1075,14 @@ grid_string_cells_code(const struct grid_cell *lastgc,
 	}
 
 	/* If the foreground colour changed, write its parameters. */
-	nnewc = grid_string_cells_fg(gc, newc);
-	noldc = grid_string_cells_fg(lastgc, oldc);
+	nnewc = grid_string_cells_colour(gc->fg, 0, newc);
+	noldc = grid_string_cells_colour(lastgc->fg, 0, oldc);
 	grid_string_cells_add_code(buf, len, n, s, newc, oldc, nnewc, noldc,
 	    flags);
 
 	/* If the background colour changed, append its parameters. */
-	nnewc = grid_string_cells_bg(gc, newc);
-	noldc = grid_string_cells_bg(lastgc, oldc);
+	nnewc = grid_string_cells_colour(gc->bg, 1, newc);
+	noldc = grid_string_cells_colour(lastgc->bg, 1, oldc);
 	grid_string_cells_add_code(buf, len, n, s, newc, oldc, nnewc, noldc,
 	    flags);
 
