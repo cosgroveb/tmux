@@ -221,6 +221,22 @@ check_ok move-window -s alpha:9 -t alpha:5
 check "alpha:5" "payload" '#{window_name}'
 check_fail "can't find window: 9" "alpha:9"
 
+# --- shared window selection ----------------------------------------------
+# A shared window chooses the most recently active session, then its current
+# link if possible or its first link. Force an unrelated current session so
+# the shared window must be resolved across sessions.
+check_ok new-session -d -s linked-first -x 80 -y 24
+shared=$($TMUX display-message -p -t linked-first:0 '#{window_id}')
+check_ok new-session -d -s linked-latest -x 80 -y 24
+check_ok link-window -d -s "$shared" -t linked-latest:3
+check_ok link-window -d -s "$shared" -t linked-latest:7
+check_ok select-window -t linked-latest:7
+TMUX_PANE=$pane check "$shared" "linked-latest:7" \
+	'#{session_name}:#{window_index}'
+check_ok select-window -t linked-latest:0
+TMUX_PANE=$pane check "$shared" "linked-latest:3" \
+	'#{session_name}:#{window_index}'
+
 # --- default state with no client -----------------------------------------
 #
 # run-shell with no target and no attached client has cmd-find build the

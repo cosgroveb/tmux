@@ -28,7 +28,7 @@
 
 static int	cmd_find_session_better(struct session *, struct session *,
 		    int);
-static struct session *cmd_find_best_session(struct session **, u_int, int);
+static struct session *cmd_find_best_session(struct window *, int);
 static int	cmd_find_best_session_with_window(struct cmd_find_state *);
 static int	cmd_find_best_winlink_with_window(struct cmd_find_state *);
 
@@ -159,30 +159,20 @@ cmd_find_session_valid(struct session *s)
 	return (1);
 }
 
-/* Find best session from a list, or all if list is NULL. */
+/* Find best session containing window, or all if window is NULL. */
 static struct session *
-cmd_find_best_session(struct session **slist, u_int ssize, int flags)
+cmd_find_best_session(struct window *w, int flags)
 {
 	struct session	 *s_loop, *s;
-	u_int		  i;
-
-	log_debug("%s: %u sessions to try", __func__, ssize);
 
 	s = NULL;
-	if (slist != NULL) {
-		for (i = 0; i < ssize; i++) {
-			if (!cmd_find_session_valid(slist[i]))
-				continue;
-			if (cmd_find_session_better(slist[i], s, flags))
-				s = slist[i];
-		}
-	} else {
-		RB_FOREACH(s_loop, sessions, &sessions) {
-			if (!cmd_find_session_valid(s_loop))
-				continue;
-			if (cmd_find_session_better(s_loop, s, flags))
-				s = s_loop;
-		}
+	RB_FOREACH(s_loop, sessions, &sessions) {
+		if (w != NULL && !session_has(s_loop, w))
+			continue;
+		if (!cmd_find_session_valid(s_loop))
+			continue;
+		if (cmd_find_session_better(s_loop, s, flags))
+			s = s_loop;
 	}
 	return (s);
 }
@@ -191,30 +181,12 @@ cmd_find_best_session(struct session **slist, u_int ssize, int flags)
 static int
 cmd_find_best_session_with_window(struct cmd_find_state *fs)
 {
-	struct session	**slist = NULL;
-	u_int		  ssize;
-	struct session	 *s;
-
 	log_debug("%s: window is @%u", __func__, fs->w->id);
 
-	ssize = 0;
-	RB_FOREACH(s, sessions, &sessions) {
-		if (!session_has(s, fs->w))
-			continue;
-		slist = xreallocarray(slist, ssize + 1, sizeof *slist);
-		slist[ssize++] = s;
-	}
-	if (ssize == 0)
-		goto fail;
-	fs->s = cmd_find_best_session(slist, ssize, fs->flags);
+	fs->s = cmd_find_best_session(fs->w, fs->flags);
 	if (fs->s == NULL)
-		goto fail;
-	free(slist);
+		return (-1);
 	return (cmd_find_best_winlink_with_window(fs));
-
-fail:
-	free(slist);
-	return (-1);
 }
 
 /*
@@ -840,7 +812,7 @@ cmd_find_from_nothing(struct cmd_find_state *fs, int flags)
 {
 	cmd_find_clear_state(fs, flags);
 
-	fs->s = cmd_find_best_session(NULL, 0, flags);
+	fs->s = cmd_find_best_session(NULL, flags);
 	if (fs->s == NULL) {
 		cmd_find_clear_state(fs, flags);
 		return (-1);
@@ -1294,7 +1266,7 @@ cmd_find_current_client(struct cmdq_item *item, int quiet)
 		if (cmd_find_best_session_with_window(&fs) == 0)
 			found = cmd_find_best_client(fs.s);
 	} else {
-		s = cmd_find_best_session(NULL, 0, CMD_FIND_QUIET);
+		s = cmd_find_best_session(NULL, CMD_FIND_QUIET);
 		if (s != NULL)
 			found = cmd_find_best_client(s);
 	}
