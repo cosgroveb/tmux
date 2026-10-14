@@ -133,7 +133,6 @@ struct input_ctx {
 	int				flags;
 #define INPUT_DISCARD 0x1
 #define INPUT_LAST 0x2
-#define INPUT_OSC_7501_ST 0x4
 
 	struct input_requests		 requests;
 	u_int				 request_count;
@@ -947,6 +946,7 @@ input_reset(struct input_ctx *ictx, int clear)
 
 	ictx->state = &input_state_ground;
 	ictx->flags = 0;
+	ictx->osc_start = SIZE_MAX;
 }
 
 /* Return pending data. */
@@ -979,13 +979,6 @@ input_parse(struct input_ctx *ictx, const u_char *buf, size_t len)
 	/* Parse the input. */
 	while (off < len) {
 		ictx->ch = buf[off++];
-
-		if (ictx->flags & INPUT_OSC_7501_ST) {
-			ictx->flags &= ~INPUT_OSC_7501_ST;
-			if (ictx->ch == '\\' &&
-			    ictx->state == &input_state_esc_enter)
-				input_osc_7501(ictx);
-		}
 
 		/* Find the transition. */
 		if (ictx->state != state ||
@@ -1462,7 +1455,7 @@ input_esc_dispatch(struct input_ctx *ictx)
 		ictx->cell.g1set = 0;
 		break;
 	case INPUT_ESC_ST:
-		/* ST terminates OSC but the state transition already did it. */
+		input_osc_7501(ictx);
 		break;
 	}
 
@@ -2796,7 +2789,7 @@ input_exit_osc(struct input_ctx *ictx)
 	}
 }
 
-/* Use raw bytes and defer ST until its backslash actually arrives. */
+/* Validate raw bytes after the complete terminator arrives. */
 static void
 input_osc_7501(struct input_ctx *ictx)
 {
@@ -2811,11 +2804,6 @@ input_osc_7501(struct input_ctx *ictx)
 	raw = EVBUFFER_DATA(ictx->since_ground) + ictx->osc_start;
 	if (memcmp(raw, "\033]7501;", 7) != 0)
 		return;
-	if (ictx->ch == '\033') {
-		if (len < 4095)
-			ictx->flags |= INPUT_OSC_7501_ST;
-		return;
-	}
 	if (ictx->ch == '\\') {
 		if (len < 8 || raw[len - 1] != '\033')
 			return;
@@ -2824,6 +2812,8 @@ input_osc_7501(struct input_ctx *ictx)
 		return;
 	raw += 7;
 	len -= 7;
+	if (memchr(raw, '\033', len) != NULL)
+		return;
 	if (len == 1 && *raw == '?') {
 		input_reply(ictx, 1, "\033]7501;?:states=idle,working,done,"
 		    "blocked,error:kinds=permission,question,auth\033\\");

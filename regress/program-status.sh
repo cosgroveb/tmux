@@ -118,9 +118,19 @@ done
 start_pane replace 80 5 '\033]7501;state=blocked:kind=auth:app=first:msg=eA==\007\033]7501;state=working\007\033]7501;state=working:kind=ignored\007'
 check_status replace: 2 '[{"id":"","state":"working"}]'
 
-start_pane hierarchy 80 5 '\033]7501;state=idle:app=root\007\033]7501;state=done:id=z/a/b\007\033]7501;state=working:id=z:app=parent\007\033]7501;state=blocked:id=a:app=own\007'
-check_status hierarchy: 4 '[{"id":"","state":"idle","app":"root","effective_app":"root"},{"id":"a","state":"blocked","app":"own","effective_app":"own"},{"id":"z","state":"working","app":"parent","effective_app":"parent"},{"id":"z/a/b","state":"done","effective_app":"parent"}]'
+start_cmd hierarchy 80 5 "printf '\033]7501;state=idle:app=root\007\033]7501;state=done:id=z/a/b\007\033]7501;state=working:id=z:app=parent\007\033]7501;state=blocked:id=a:app=own\007'; $TMUX wait-for duplicate; printf '\033]7501;state=working:id=z:app=parent:kind=ignored\007\033]7501;'; $TMUX wait-for changed; printf 'state=error:id=z:app=next\007'; $INPUT_HOLD"
+wait_format hierarchy: '#{pane_program_status_revision}' 4
+records='[{"id":"","state":"idle","app":"root","effective_app":"root"},{"id":"a","state":"blocked","app":"own","effective_app":"own"},{"id":"z","state":"working","app":"parent","effective_app":"parent"},{"id":"z/a/b","state":"done","effective_app":"parent"}]'
+check_status hierarchy: 4 "$records"
 check_states hierarchy: 'blocked done idle working'
+$TMUX wait-for -S duplicate
+wait_pending hierarchy: '\033]7501;'
+check_status hierarchy: 4 "$records"
+check_states hierarchy: 'blocked done idle working'
+$TMUX wait-for -S changed
+wait_format hierarchy: '#{pane_program_status_revision}' 5
+check_status hierarchy: 5 '[{"id":"","state":"idle","app":"root","effective_app":"root"},{"id":"a","state":"blocked","app":"own","effective_app":"own"},{"id":"z","state":"error","app":"next","effective_app":"next"},{"id":"z/a/b","state":"done","effective_app":"next"}]'
+check_states hierarchy: 'blocked done error idle'
 
 start_pane clear 80 5 '\033]7501;state=idle:app=root\007\033]7501;state=done:id=a/b\007\033]7501;state=done:id=ab\007\033]7501;state=clear:id=a\007\033]7501;state=clear:id=missing\007'
 check_status clear: 4 '[{"id":"","state":"idle","app":"root","effective_app":"root"},{"id":"ab","state":"done","effective_app":"root"}]'
@@ -174,6 +184,10 @@ done
 
 for sequence in '\033]7501;state=done\030' '\033]7501;state=done\032' \
     '\033]7501;state=done\033x' '\033]7501;state=done\033\000\\' \
+    '\033]7501;state=done\033\033\\' \
+    '\033]7501;state=done\033\000\033\\' \
+    '\033]7501;state=done\033\177\\' \
+    '\033]7501;state=done\033 \\' \
     '\033]07501;state=done\007' '\033]75\00001;state=done\007' \
     '\033\000]7501;state=done\007'; do
 	start_pane aborted 80 5 "$sequence\033]7501;state=working\007"
@@ -195,6 +209,13 @@ check_status fragmented: 0 '[]'
 $TMUX wait-for -S st
 wait_format fragmented: '#{pane_program_status_revision}' 1
 check_status fragmented: 1 '[{"id":"","state":"done"}]'
+
+start_cmd reset-pending 80 5 "printf '\033]7501;state=done'; $TMUX wait-for reset; printf '\033\\\\\033]7501;state=working\007'; $INPUT_HOLD"
+wait_pending reset-pending: '\033]7501;state=done'
+$TMUX send-keys -R -t reset-pending:
+$TMUX wait-for -S reset
+wait_format reset-pending: '#{pane_program_status_revision}' 1
+check_status reset-pending: 1 '[{"id":"","state":"working"}]'
 
 start_pane screens 80 5 '\033]7501;state=working\007\033[?1049h\033[!p\033[?1049l'
 check_status screens: 1 '[{"id":"","state":"working"}]'

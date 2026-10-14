@@ -234,14 +234,10 @@ program_status_parse(const u_char *buf, size_t len)
 			    memcmp(program_status_keys[field], key, keylen) == 0)
 				break;
 		}
+		if (field == PROGRAM_STATUS_FIELDS)
+			continue;
 		if (!program_status_limits(field, value, valuelen))
 			goto fail;
-		for (i = 0; i < keylen; i++) {
-			if (key[i] < 'a' || key[i] > 'z')
-				break;
-		}
-		if (i != keylen)
-			continue;
 		for (i = 0; i < valuelen; i++) {
 			if (!((value[i] >= 'a' && value[i] <= 'z') ||
 			    (value[i] >= 'A' && value[i] <= 'Z') ||
@@ -252,7 +248,7 @@ program_status_parse(const u_char *buf, size_t len)
 		}
 		if (i != valuelen && field == PROGRAM_STATUS_ID)
 			goto fail;
-		if (i != valuelen || field == PROGRAM_STATUS_FIELDS)
+		if (i != valuelen)
 			continue;
 		if (field == PROGRAM_STATUS_MSG || field == PROGRAM_STATUS_TITLE) {
 			copy = program_status_decode(value, valuelen,
@@ -333,6 +329,7 @@ program_status_update(struct window_pane *wp, const u_char *buf, size_t len)
 	struct program_status_record	*record, *old, *next;
 	char				*a, *b;
 	u_int				 i, count;
+	int				 changed = 1;
 
 	if ((record = program_status_parse(buf, len)) == NULL)
 		return;
@@ -362,19 +359,14 @@ program_status_update(struct window_pane *wp, const u_char *buf, size_t len)
 			    (a != NULL && strcmp(a, b) != 0))
 				break;
 		}
-		if (i == PROGRAM_STATUS_FIELDS) {
-			/* Unchanged reports still refresh eviction order. */
-			TAILQ_REMOVE(&ps->records, old, entry);
-			TAILQ_INSERT_TAIL(&ps->records, old, entry);
-			program_status_record_free(record);
-			return;
-		}
+		changed = (i != PROGRAM_STATUS_FIELDS);
 		program_status_remove(ps, old);
 	} else if (ps->count == PROGRAM_STATUS_RECORDS)
 		program_status_remove(ps, TAILQ_FIRST(&ps->records));
 	TAILQ_INSERT_TAIL(&ps->records, record, entry);
 	ps->count++;
-	program_status_changed(wp);
+	if (changed)
+		program_status_changed(wp);
 }
 
 /* Process exit and shell prompts expire active records, not their subtrees. */
