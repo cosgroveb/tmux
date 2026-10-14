@@ -77,23 +77,6 @@ hyperlinks_by_uri_cmp(struct hyperlinks_uri *left, struct hyperlinks_uri *right)
 {
 	int	r;
 
-	if (*left->internal_id == '\0' || *right->internal_id == '\0') {
-		/*
-		 * If both URIs are anonymous, use the inner for comparison so
-		 * that they do not match even if the URI is the same - each
-		 * anonymous URI should be unique.
-		 */
-		if (*left->internal_id != '\0')
-			return (-1);
-		if (*right->internal_id != '\0')
-			return (1);
-		if (left->inner < right->inner)
-			return (-1);
-		if (left->inner > right->inner)
-			return (1);
-		return (0);
-	}
-
 	r = strcmp(left->internal_id, right->internal_id);
 	if (r != 0)
 		return (r);
@@ -129,7 +112,8 @@ hyperlinks_remove(struct hyperlinks_uri *hlu)
 	global_hyperlinks_count--;
 
 	RB_REMOVE(hyperlinks_by_inner_tree, &hl->by_inner, hlu);
-	RB_REMOVE(hyperlinks_by_uri_tree, &hl->by_uri, hlu);
+	if (*hlu->internal_id != '\0')
+		RB_REMOVE(hyperlinks_by_uri_tree, &hl->by_uri, hlu);
 
 	free((void *)hlu->internal_id);
 	free((void *)hlu->external_id);
@@ -145,11 +129,7 @@ hyperlinks_put(struct hyperlinks *hl, const char *uri_in,
 	struct hyperlinks_uri	 find, *hlu;
 	char			*uri, *internal_id, *external_id;
 
-	/*
-	 * Anonymous URI are stored with an empty internal ID and the tree
-	 * comparator will make sure they never match each other (so each
-	 * anonymous URI is unique).
-	 */
+	/* Anonymous URIs have an empty internal ID and are not indexed by URI. */
 	if (internal_id_in == NULL)
 		internal_id_in = "";
 
@@ -179,7 +159,8 @@ hyperlinks_put(struct hyperlinks *hl, const char *uri_in,
 	hlu->external_id = external_id;
 	hlu->uri = uri;
 	hlu->tree = hl;
-	RB_INSERT(hyperlinks_by_uri_tree, &hl->by_uri, hlu);
+	if (*hlu->internal_id != '\0')
+		RB_INSERT(hyperlinks_by_uri_tree, &hl->by_uri, hlu);
 	RB_INSERT(hyperlinks_by_inner_tree, &hl->by_inner, hlu);
 
 	TAILQ_INSERT_TAIL(&global_hyperlinks, hlu, list_entry);
