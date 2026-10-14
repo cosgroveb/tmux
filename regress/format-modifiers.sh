@@ -561,6 +561,11 @@ test_format "#{S/i:#{session_name} }" "zeta alpha mike "
 test_format "#{S/n:#{session_name} }" "alpha mike zeta "
 test_format "#{S/nr:#{session_name} }" "zeta mike alpha "
 test_format "#{S/ir:#{session_name} }" "mike alpha zeta "
+# Combined flags retain i > n > t precedence regardless of flag order.
+test_format "#{S/ni:#{session_name} }" "zeta alpha mike "
+test_format "#{S/tn:#{session_name} }" "alpha mike zeta "
+test_format "#{S/tnir:#{session_name} }" "mike alpha zeta "
+test_format "#{S/x:#{session_name} }" "zeta alpha mike "
 # /t sorts by activity time; the exact order is timing-dependent, so just check
 # every session is still iterated (this exercises the activity-sort branch).
 test_format "#{S/t:x}" "xxx"
@@ -582,6 +587,14 @@ test_format "#{W/i:#{window_name} }" "charlie alpha bravo " "zeta:"
 test_format "#{W/t:x}" "xxx" "zeta:"
 # An unrecognised sort letter falls back to the default order; /r reverses it.
 test_format "#{W/r:#{window_name} }" "bravo alpha charlie " "zeta:"
+test_format "#{W/ni:#{window_name} }" "charlie alpha bravo " "zeta:"
+test_format "#{W/tn:#{window_name} }" "alpha bravo charlie " "zeta:"
+test_format "#{W/tnir:#{window_name} }" "bravo alpha charlie " "zeta:"
+test_format "#{W/x:#{window_name} }" "charlie alpha bravo " "zeta:"
+# The last loop modifier supplies sort flags; S still takes precedence over W.
+test_format "#{S/i;W/n:#{session_name} }" "alpha mike zeta "
+test_format "#{W/n;S/i:#{session_name} }" "zeta alpha mike "
+test_format "#{S/nr;S:#{session_name} }" "zeta alpha mike "
 
 # Panes in window zeta:charlie.  Splitting the active (newest) pane each time
 # makes pane index match creation order (0,1,2 left to right).  The default

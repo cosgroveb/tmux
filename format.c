@@ -6054,6 +6054,24 @@ format_cycle(struct format_expand_state *es, const char *frames, u_int count)
 	return (xstrndup(start, end - start));
 }
 
+/* Parse sort flags for session, window and client loops. */
+static void
+format_loop_sort(struct format_modifier *fm, struct sort_criteria *sc,
+    enum sort_order order)
+{
+	const char	*flags = fm->argc < 1 ? "" : fm->argv[0];
+
+	if (strchr(flags, 'i') != NULL)
+		sc->order = order;
+	else if (strchr(flags, 'n') != NULL)
+		sc->order = SORT_NAME;
+	else if (strchr(flags, 't') != NULL)
+		sc->order = SORT_ACTIVITY;
+	else
+		sc->order = order;
+	sc->reversed = (strchr(flags, 'r') != NULL);
+}
+
 /* Replace a key. */
 static int
 format_replace(struct format_expand_state *es, const char *key, size_t keylen,
@@ -6229,43 +6247,11 @@ format_replace(struct format_expand_state *es, const char *key, size_t keylen,
 				break;
 			case 'S':
 				modifiers |= FORMAT_SESSIONS;
-				if (fm->argc < 1) {
-					sc->order= SORT_INDEX;
-					sc->reversed = 0;
-					break;
-				}
-				if (strchr(fm->argv[0], 'i') != NULL)
-					sc->order = SORT_INDEX;
-				else if (strchr(fm->argv[0], 'n') != NULL)
-					sc->order = SORT_NAME;
-				else if (strchr(fm->argv[0], 't') != NULL)
-					sc->order = SORT_ACTIVITY;
-				else
-					sc->order = SORT_INDEX;
-				if (strchr(fm->argv[0], 'r') != NULL)
-					sc->reversed = 1;
-				else
-					sc->reversed = 0;
+				format_loop_sort(fm, sc, SORT_INDEX);
 				break;
 			case 'W':
 				modifiers |= FORMAT_WINDOWS;
-				if (fm->argc < 1) {
-					sc->order = SORT_ORDER;
-					sc->reversed = 0;
-					break;
-				}
-				if (strchr(fm->argv[0], 'i') != NULL)
-					sc->order = SORT_ORDER;
-				else if (strchr(fm->argv[0], 'n') != NULL)
-					sc->order = SORT_NAME;
-				else if (strchr(fm->argv[0], 't') != NULL)
-					sc->order = SORT_ACTIVITY;
-				else
-					sc->order = SORT_ORDER;
-				if (strchr(fm->argv[0], 'r') != NULL)
-					sc->reversed = 1;
-				else
-					sc->reversed = 0;
+				format_loop_sort(fm, sc, SORT_ORDER);
 				break;
 			case 'P':
 				modifiers |= FORMAT_PANES;
@@ -6297,23 +6283,7 @@ format_replace(struct format_expand_state *es, const char *key, size_t keylen,
 				break;
 			case 'L':
 				modifiers |= FORMAT_CLIENTS;
-				if (fm->argc < 1) {
-					sc->order = SORT_ORDER;
-					sc->reversed = 0;
-					break;
-				}
-				if (strchr(fm->argv[0], 'i') != NULL)
-					sc->order = SORT_ORDER;
-				else if (strchr(fm->argv[0], 'n') != NULL)
-					sc->order = SORT_NAME;
-				else if (strchr(fm->argv[0], 't') != NULL)
-					sc->order = SORT_ACTIVITY;
-				else
-					sc->order = SORT_ORDER;
-				if (strchr(fm->argv[0], 'r') != NULL)
-					sc->reversed = 1;
-				else
-					sc->reversed = 0;
+				format_loop_sort(fm, sc, SORT_ORDER);
 				break;
 			case 'R':
 				modifiers |= FORMAT_REPEAT;
