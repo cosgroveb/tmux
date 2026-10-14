@@ -54,7 +54,7 @@ cmd_attach_session(struct cmdq_item *item, const char *tflag, int dflag,
 	struct cmd_find_state	*current = cmdq_get_current(item);
 	struct cmd_find_state	 target;
 	enum cmd_find_type	 type;
-	int			 flags;
+	int			 flags, already_attached;
 	struct client		*c = cmdq_get_client(item), *c_loop;
 	struct session		*s;
 	struct winlink		*wl;
@@ -121,48 +121,32 @@ cmd_attach_session(struct cmdq_item *item, const char *tflag, int dflag,
 	}
 
 	c->last_session = c->session;
-	if (c->session != NULL) {
-		if (dflag || xflag) {
-			if (xflag)
-				msgtype = MSG_DETACHKILL;
-			else
-				msgtype = MSG_DETACH;
-			TAILQ_FOREACH(c_loop, &clients, entry) {
-				if (c_loop->session != s || c == c_loop)
-					continue;
-				server_client_detach(c_loop, msgtype);
-			}
-		}
-		if (!Eflag)
-			environ_update(s->options, c->environ, s->environ);
+	already_attached = (c->session != NULL);
+	if (!already_attached && server_client_open(c, &cause) != 0) {
+		cmdq_error(item, "open terminal failed: %s", cause);
+		free(cause);
+		return (CMD_RETURN_ERROR);
+	}
 
-		server_client_set_session(c, s);
-		if (~cmdq_get_flags(item) & CMDQ_STATE_REPEAT)
-			server_client_set_key_table(c, NULL);
-	} else {
-		if (server_client_open(c, &cause) != 0) {
-			cmdq_error(item, "open terminal failed: %s", cause);
-			free(cause);
-			return (CMD_RETURN_ERROR);
+	if (dflag || xflag) {
+		if (xflag)
+			msgtype = MSG_DETACHKILL;
+		else
+			msgtype = MSG_DETACH;
+		TAILQ_FOREACH(c_loop, &clients, entry) {
+			if (c_loop->session != s || c == c_loop)
+				continue;
+			server_client_detach(c_loop, msgtype);
 		}
+	}
+	if (!Eflag)
+		environ_update(s->options, c->environ, s->environ);
 
-		if (dflag || xflag) {
-			if (xflag)
-				msgtype = MSG_DETACHKILL;
-			else
-				msgtype = MSG_DETACH;
-			TAILQ_FOREACH(c_loop, &clients, entry) {
-				if (c_loop->session != s || c == c_loop)
-					continue;
-				server_client_detach(c_loop, msgtype);
-			}
-		}
-		if (!Eflag)
-			environ_update(s->options, c->environ, s->environ);
-
-		server_client_set_session(c, s);
+	server_client_set_session(c, s);
+	if (!already_attached || (~cmdq_get_flags(item) & CMDQ_STATE_REPEAT))
 		server_client_set_key_table(c, NULL);
 
+	if (!already_attached) {
 		if (~c->flags & CLIENT_CONTROL)
 			proc_send(c->peer, MSG_READY, -1, NULL, 0);
 		events_fire_client("client-attached", c);
