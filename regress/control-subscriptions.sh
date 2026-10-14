@@ -40,6 +40,22 @@ wait_for()
 	return 1
 }
 
+wait_count()
+{
+	pattern=$1
+	count=$2
+	i=0
+
+	while [ "$i" -lt 6 ]; do
+		[ "$(grep -Fc -- "$pattern" "$OUT")" -eq "$count" ] && return 0
+		sleep 1
+		i=$((i + 1))
+	done
+	echo "expected $count occurrences: $pattern"
+	cat "$OUT"
+	return 1
+}
+
 reject_for()
 {
 	pattern=$1
@@ -153,6 +169,34 @@ set -- $(window_fields subs:window-test)
 awid=$1
 awidx=$2
 wait_for "%subscription-changed aw $sid $awid $awidx - : $awid" || exit 1
+
+# Each link has its own value, even when the expanded format is identical.
+$TMUX link-window -s other:1 -t subs:20 || exit 1
+wait_for "%subscription-changed ap $sid $wid 20 $newpane : $newpane" || exit 1
+wait_for "%subscription-changed aw $sid $wid 20 - : $wid" || exit 1
+wait_for "%subscription-changed sp $sid $wid 20 $newpane : $newpane:$wid" ||
+    exit 1
+wait_for "%subscription-changed cw $sid $wid 20 - : $wid:20" || exit 1
+
+# All-object scans must discard missing links so unchanged values fire again.
+$TMUX unlink-window -t subs:20 || exit 1
+sleep 3
+$TMUX link-window -s other:1 -t subs:20 || exit 1
+wait_count "%subscription-changed ap $sid $wid 20 $newpane : $newpane" 2 ||
+    exit 1
+wait_count "%subscription-changed aw $sid $wid 20 - : $wid" 2 || exit 1
+wait_count "%subscription-changed sp $sid $wid 20 $newpane : $newpane:$wid" 1 ||
+    exit 1
+wait_count "%subscription-changed cw $sid $wid 20 - : $wid:20" 1 || exit 1
+
+# Replacing the target type starts with an empty cache.
+send "refresh-client -B 'replace:$wid:constant'"
+wait_for "%subscription-changed replace $sid $wid $widx - : constant" || exit 1
+send "refresh-client -B 'replace:$pane:constant'"
+wait_for "%subscription-changed replace $sid $wid $widx $pane : constant" ||
+    exit 1
+send "refresh-client -B 'replace::constant'"
+wait_for "%subscription-changed replace $sid - - - : constant" || exit 1
 
 send "refresh-client -B 'dup::#{session_windows}'"
 wcount=$($TMUX display-message -p -t subs '#{session_windows}')

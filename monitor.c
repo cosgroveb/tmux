@@ -24,27 +24,16 @@
 
 #include "tmux.h"
 
-/* Subscription pane. */
-struct monitor_pane {
-	u_int				 pane;
+/* Cached pane or window value, keyed by object ID and winlink index. */
+struct monitor_value {
+	u_int				 id;
 	u_int				 idx;
 	char				*last;
 	u_int				 generation;
 
-	RB_ENTRY(monitor_pane)		 entry;
+	RB_ENTRY(monitor_value)		 entry;
 };
-RB_HEAD(monitor_panes, monitor_pane);
-
-/* Subscription window. */
-struct monitor_window {
-	u_int				 window;
-	u_int				 idx;
-	char				*last;
-	u_int				 generation;
-
-	RB_ENTRY(monitor_window)	 entry;
-};
-RB_HEAD(monitor_windows, monitor_window);
+RB_HEAD(monitor_values, monitor_value);
 
 /* Subscription. */
 struct monitor_item {
@@ -56,8 +45,7 @@ struct monitor_item {
 	int				 flags;
 
 	char				*last;
-	struct monitor_panes		 panes;
-	struct monitor_windows		 windows;
+	struct monitor_values		 values;
 
 	u_int				 fire_count;
 	time_t				 fire_time;
@@ -116,54 +104,48 @@ monitor_item_cmp(struct monitor_item *m1, struct monitor_item *m2)
 }
 RB_GENERATE_STATIC(monitor_items, monitor_item, entry, monitor_item_cmp);
 
-/* Compare subscription panes. */
+/* Compare cached values. */
 static int
-monitor_pane_cmp(struct monitor_pane *mp1, struct monitor_pane *mp2)
+monitor_value_cmp(struct monitor_value *mv1, struct monitor_value *mv2)
 {
-	if (mp1->pane < mp2->pane)
+	if (mv1->id < mv2->id)
 		return (-1);
-	if (mp1->pane > mp2->pane)
+	if (mv1->id > mv2->id)
 		return (1);
-	if (mp1->idx < mp2->idx)
+	if (mv1->idx < mv2->idx)
 		return (-1);
-	if (mp1->idx > mp2->idx)
+	if (mv1->idx > mv2->idx)
 		return (1);
 	return (0);
 }
-RB_GENERATE_STATIC(monitor_panes, monitor_pane, entry, monitor_pane_cmp);
+RB_GENERATE_STATIC(monitor_values, monitor_value, entry, monitor_value_cmp);
 
-/* Compare subscription windows. */
-static int
-monitor_window_cmp(struct monitor_window *mw1, struct monitor_window *mw2)
+/* Find or create a cached value. */
+static struct monitor_value *
+monitor_get_value(struct monitor_item *me, u_int id, u_int idx)
 {
-	if (mw1->window < mw2->window)
-		return (-1);
-	if (mw1->window > mw2->window)
-		return (1);
-	if (mw1->idx < mw2->idx)
-		return (-1);
-	if (mw1->idx > mw2->idx)
-		return (1);
-	return (0);
+	struct monitor_value	*mv, find = { .id = id, .idx = idx };
+
+	mv = RB_FIND(monitor_values, &me->values, &find);
+	if (mv == NULL) {
+		mv = xcalloc(1, sizeof *mv);
+		mv->id = id;
+		mv->idx = idx;
+		RB_INSERT(monitor_values, &me->values, mv);
+	}
+	return (mv);
 }
-RB_GENERATE_STATIC(monitor_windows, monitor_window, entry, monitor_window_cmp);
 
 /* Free a subscription. */
 static void
 monitor_free_item(struct monitor_set *ms, struct monitor_item *me)
 {
-	struct monitor_pane	*mp, *mp1;
-	struct monitor_window	*mw, *mw1;
+	struct monitor_value	*mv, *mv1;
 
-	RB_FOREACH_SAFE(mp, monitor_panes, &me->panes, mp1) {
-		RB_REMOVE(monitor_panes, &me->panes, mp);
-		free(mp->last);
-		free(mp);
-	}
-	RB_FOREACH_SAFE(mw, monitor_windows, &me->windows, mw1) {
-		RB_REMOVE(monitor_windows, &me->windows, mw);
-		free(mw->last);
-		free(mw);
+	RB_FOREACH_SAFE(mv, monitor_values, &me->values, mv1) {
+		RB_REMOVE(monitor_values, &me->values, mv);
+		free(mv->last);
+		free(mv);
 	}
 	free(me->last);
 
@@ -246,7 +228,7 @@ monitor_check_pane(struct monitor_set *ms, struct monitor_item *me)
 	struct winlink		*wl;
 	struct format_tree	*ft;
 	char			*value;
-	struct monitor_pane	*mp, find;
+	struct monitor_value	*mv;
 
 	wp = window_pane_find_by_id(me->id);
 	if (wp == NULL || wp->fd == -1)
@@ -261,17 +243,9 @@ monitor_check_pane(struct monitor_set *ms, struct monitor_item *me)
 		value = format_expand(ft, me->format);
 		format_free(ft);
 
-		find.pane = wp->id;
-		find.idx = wl->idx;
-		mp = RB_FIND(monitor_panes, &me->panes, &find);
-		if (mp == NULL) {
-			mp = xcalloc(1, sizeof *mp);
-			mp->pane = wp->id;
-			mp->idx = wl->idx;
-			RB_INSERT(monitor_panes, &me->panes, mp);
-		}
+		mv = monitor_get_value(me, wp->id, wl->idx);
 
-		monitor_check_value(ms, me, s, wl, wp, value, &mp->last);
+		monitor_check_value(ms, me, s, wl, wp, value, &mv->last);
 	}
 }
 
@@ -282,36 +256,28 @@ monitor_check_all_panes_one(struct monitor_set *ms, struct monitor_item *me,
 {
 	struct session		*s = monitor_get_session(ms);
 	char			*value;
-	struct monitor_pane	*mp, find;
+	struct monitor_value	*mv;
 
 	value = format_expand(ft, me->format);
 
-	find.pane = wp->id;
-	find.idx = wl->idx;
-	mp = RB_FIND(monitor_panes, &me->panes, &find);
-	if (mp == NULL) {
-		mp = xcalloc(1, sizeof *mp);
-		mp->pane = wp->id;
-		mp->idx = wl->idx;
-		RB_INSERT(monitor_panes, &me->panes, mp);
-	}
-	mp->generation = ms->generation;
+	mv = monitor_get_value(me, wp->id, wl->idx);
+	mv->generation = ms->generation;
 
-	monitor_check_value(ms, me, s, wl, wp, value, &mp->last);
+	monitor_check_value(ms, me, s, wl, wp, value, &mv->last);
 }
 
-/* Remove all-panes entries not seen during the current scan. */
+/* Remove cached values not seen during the current all-object scan. */
 static void
-monitor_sweep_all_panes(struct monitor_item *me, u_int generation)
+monitor_sweep_values(struct monitor_item *me, u_int generation)
 {
-	struct monitor_pane	*mp, *mp1;
+	struct monitor_value	*mv, *mv1;
 
-	RB_FOREACH_SAFE(mp, monitor_panes, &me->panes, mp1) {
-		if (mp->generation == generation)
+	RB_FOREACH_SAFE(mv, monitor_values, &me->values, mv1) {
+		if (mv->generation == generation)
 			continue;
-		RB_REMOVE(monitor_panes, &me->panes, mp);
-		free(mp->last);
-		free(mp);
+		RB_REMOVE(monitor_values, &me->values, mv);
+		free(mv->last);
+		free(mv);
 	}
 }
 
@@ -325,7 +291,7 @@ monitor_check_window(struct monitor_set *ms, struct monitor_item *me)
 	struct winlink		*wl;
 	struct format_tree	*ft;
 	char			*value;
-	struct monitor_window	*mw, find;
+	struct monitor_value	*mv;
 
 	w = window_find_by_id(me->id);
 	if (w == NULL)
@@ -339,17 +305,9 @@ monitor_check_window(struct monitor_set *ms, struct monitor_item *me)
 		value = format_expand(ft, me->format);
 		format_free(ft);
 
-		find.window = w->id;
-		find.idx = wl->idx;
-		mw = RB_FIND(monitor_windows, &me->windows, &find);
-		if (mw == NULL) {
-			mw = xcalloc(1, sizeof *mw);
-			mw->window = w->id;
-			mw->idx = wl->idx;
-			RB_INSERT(monitor_windows, &me->windows, mw);
-		}
+		mv = monitor_get_value(me, w->id, wl->idx);
 
-		monitor_check_value(ms, me, s, wl, NULL, value, &mw->last);
+		monitor_check_value(ms, me, s, wl, NULL, value, &mv->last);
 	}
 }
 
@@ -361,37 +319,14 @@ monitor_check_all_windows_one(struct monitor_set *ms, struct monitor_item *me,
 	struct session		*s = monitor_get_session(ms);
 	struct window		*w = wl->window;
 	char			*value;
-	struct monitor_window	*mw, find;
+	struct monitor_value	*mv;
 
 	value = format_expand(ft, me->format);
 
-	find.window = w->id;
-	find.idx = wl->idx;
-	mw = RB_FIND(monitor_windows, &me->windows, &find);
-	if (mw == NULL) {
-		mw = xcalloc(1, sizeof *mw);
-		mw->window = w->id;
-		mw->idx = wl->idx;
-		RB_INSERT(monitor_windows, &me->windows, mw);
-	}
-	mw->generation = ms->generation;
+	mv = monitor_get_value(me, w->id, wl->idx);
+	mv->generation = ms->generation;
 
-	monitor_check_value(ms, me, s, wl, NULL, value, &mw->last);
-}
-
-/* Remove all-windows entries not seen during the current scan. */
-static void
-monitor_sweep_all_windows(struct monitor_item *me, u_int generation)
-{
-	struct monitor_window	*mw, *mw1;
-
-	RB_FOREACH_SAFE(mw, monitor_windows, &me->windows, mw1) {
-		if (mw->generation == generation)
-			continue;
-		RB_REMOVE(monitor_windows, &me->windows, mw);
-		free(mw->last);
-		free(mw);
-	}
+	monitor_check_value(ms, me, s, wl, NULL, value, &mv->last);
 }
 
 /* Check session subscriptions. */
@@ -459,7 +394,7 @@ monitor_check_all_panes(struct monitor_set *ms)
 	}
 	RB_FOREACH_SAFE(me, monitor_items, &ms->items, me1) {
 		if (me->type == MONITOR_ALL_PANES)
-			monitor_sweep_all_panes(me, ms->generation);
+			monitor_sweep_values(me, ms->generation);
 	}
 }
 
@@ -486,7 +421,7 @@ monitor_check_all_windows(struct monitor_set *ms)
 	}
 	RB_FOREACH_SAFE(me, monitor_items, &ms->items, me1) {
 		if (me->type == MONITOR_ALL_WINDOWS)
-			monitor_sweep_all_windows(me, ms->generation);
+			monitor_sweep_values(me, ms->generation);
 	}
 }
 
@@ -646,8 +581,7 @@ monitor_add(struct monitor_set *ms, const char *name, enum monitor_type type,
 	me->type = type;
 	me->id = id;
 	me->flags = flags;
-	RB_INIT(&me->panes);
-	RB_INIT(&me->windows);
+	RB_INIT(&me->values);
 	RB_INSERT(monitor_items, &ms->items, me);
 
 	if (!evtimer_initialized(&ms->timer))
