@@ -169,4 +169,42 @@ send "refresh-client -B 'missing-window:@999999:#{window_id}'"
 reject_for '%subscription-changed missing-pane' || exit 1
 reject_for '%subscription-changed missing-window' || exit 1
 
+# OSC 7501 snapshots use the existing explicit and all-pane subscriptions.
+$TMUX new-window -d -t subs: -n program-status /bin/sh || exit 1
+set -- $(pane_fields subs:program-status)
+wid=$1
+widx=$2
+pane=$3
+
+wait_program_status()
+{
+	snapshot=$(printf '{"schema":1,"pane_id":"%s","revision":"%s","records":%s}' \
+	    "$pane" "$1" "$2")
+	wait_for "%subscription-changed ps-all $sid $wid $widx $pane : $snapshot" ||
+	    exit 1
+	wait_for "%subscription-changed ps-one $sid $wid $widx $pane : $snapshot" ||
+	    exit 1
+}
+
+send "refresh-client -B 'ps-all:%*:#{pane_program_status}'"
+send "refresh-client -B 'ps-one:$pane:#{pane_program_status}'"
+wait_program_status 0 '[]'
+
+$TMUX send-keys -t "$pane" -l "printf '\033]7501;state=done:msg=c2FtZQ==\007'" ||
+    exit 1
+$TMUX send-keys -t "$pane" Enter || exit 1
+records='[{"id":"","state":"done","msg":"same"}]'
+wait_program_status 1 "$records"
+
+# One write returns to the same records; revision still makes the change visible.
+$TMUX send-keys -t "$pane" -l \
+    "printf '\033]7501;state=working\007\033]7501;state=done:msg=c2FtZQ==\007'" ||
+    exit 1
+$TMUX send-keys -t "$pane" Enter || exit 1
+wait_program_status 3 "$records"
+
+$TMUX send-keys -t "$pane" -l "printf '\033]7501;state=clear\007'" || exit 1
+$TMUX send-keys -t "$pane" Enter || exit 1
+wait_program_status 4 '[]'
+
 exit 0
