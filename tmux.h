@@ -3454,8 +3454,7 @@ void	 program_status_update(struct window_pane *, const u_char *, size_t);
 void	 program_status_end(struct window_pane *);
 void	 program_status_reset(struct window_pane *);
 void	 program_status_free(struct window_pane *);
-uint64_t program_status_revision(struct window_pane *);
-char	*program_status_json(struct window_pane *);
+char	*program_status_snapshot(struct window_pane *);
 char	*program_status_state_names(struct window_pane *);
 
 /* input-key.c */

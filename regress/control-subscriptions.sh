@@ -178,8 +178,7 @@ pane=$3
 
 wait_program_status()
 {
-	snapshot=$(printf '{"schema":1,"pane_id":"%s","revision":"%s","records":%s}' \
-	    "$pane" "$1" "$2")
+	snapshot="\033]7501;state=clear\a$1"
 	wait_for "%subscription-changed ps-all $sid $wid $widx $pane : $snapshot" ||
 	    exit 1
 	wait_for "%subscription-changed ps-one $sid $wid $widx $pane : $snapshot" ||
@@ -188,23 +187,23 @@ wait_program_status()
 
 send "refresh-client -B 'ps-all:%*:#{pane_program_status}'"
 send "refresh-client -B 'ps-one:$pane:#{pane_program_status}'"
-wait_program_status 0 '[]'
+wait_program_status ''
 
 $TMUX send-keys -t "$pane" -l "printf '\033]7501;state=done:msg=c2FtZQ==\007'" ||
     exit 1
 $TMUX send-keys -t "$pane" Enter || exit 1
-records='[{"id":"","state":"done","msg":"same"}]'
-wait_program_status 1 "$records"
+records='\033]7501;state=done:msg=c2FtZQ==\a'
+wait_program_status "$records"
 
-# One write returns to the same records; revision still makes the change visible.
+# A changed current snapshot produces another notification.
 $TMUX send-keys -t "$pane" -l \
-    "printf '\033]7501;state=working\007\033]7501;state=done:msg=c2FtZQ==\007'" ||
+    "printf '\033]7501;state=error\007'" ||
     exit 1
 $TMUX send-keys -t "$pane" Enter || exit 1
-wait_program_status 3 "$records"
+wait_program_status '\033]7501;state=error\a'
 
 $TMUX send-keys -t "$pane" -l "printf '\033]7501;state=clear\007'" || exit 1
 $TMUX send-keys -t "$pane" Enter || exit 1
-wait_program_status 4 '[]'
+wait_program_status ''
 
 exit 0

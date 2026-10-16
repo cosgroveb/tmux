@@ -999,20 +999,7 @@ format_cb_pane_program_status(struct format_tree *ft)
 {
 	if (ft->wp == NULL)
 		return (NULL);
-	return (program_status_json(ft->wp));
-}
-
-/* Callback for pane_program_status_revision. */
-static void *
-format_cb_pane_program_status_revision(struct format_tree *ft)
-{
-	char	*value;
-
-	if (ft->wp == NULL)
-		return (NULL);
-	xasprintf(&value, "%llu",
-	    (unsigned long long)program_status_revision(ft->wp));
-	return (value);
+	return (program_status_snapshot(ft->wp));
 }
 
 /* Callback for pane_program_status_states. */
@@ -3978,9 +3965,6 @@ static const struct format_table_entry format_table[] = {
 	},
 	{ "pane_program_status", FORMAT_TABLE_STRING,
 	  format_cb_pane_program_status
-	},
-	{ "pane_program_status_revision", FORMAT_TABLE_STRING,
-	  format_cb_pane_program_status_revision
 	},
 	{ "pane_program_status_states", FORMAT_TABLE_STRING,
 	  format_cb_pane_program_status_states
