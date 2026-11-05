@@ -119,6 +119,8 @@ struct input_ctx {
 	size_t				input_len;
 	size_t				input_space;
 	enum input_end_type		input_end;
+	char			       *program_status_pending;
+	int				osc_invalid;
 
 	struct input_param		param_list[24];
 	u_int				param_list_len;
@@ -178,6 +180,7 @@ static void	input_osc_110(struct input_ctx *, const char *);
 static void	input_osc_111(struct input_ctx *, const char *);
 static void	input_osc_112(struct input_ctx *, const char *);
 static void	input_osc_133(struct input_ctx *, const char *);
+static void	input_osc_7501(struct input_ctx *, const char *);
 
 /* Transition entry/exit handlers. */
 static void	input_clear(struct input_ctx *);
@@ -915,6 +918,7 @@ input_free(struct input_ctx *ictx)
 		input_free_request(ir);
 	event_del(&ictx->request_timer);
 
+	free(ictx->program_status_pending);
 	free(ictx->input_buf);
 #ifdef ENABLE_IMAGES
 	kitty_free_state(ictx->kitty_state);
@@ -934,6 +938,8 @@ input_reset(struct input_ctx *ictx, int clear)
 	struct screen_write_ctx	*sctx = &ictx->ctx;
 	struct window_pane	*wp = ictx->wp;
 
+	free(ictx->program_status_pending);
+	ictx->program_status_pending = NULL;
 	input_reset_cell(ictx);
 
 	if (clear && wp != NULL) {
@@ -982,6 +988,16 @@ input_parse(struct input_ctx *ictx, const u_char *buf, size_t len)
 	/* Parse the input. */
 	while (off < len) {
 		ictx->ch = buf[off++];
+
+		if (ictx->program_status_pending != NULL) {
+			if (ictx->ch == '\\')
+				input_osc_7501(ictx, ictx->program_status_pending);
+			free(ictx->program_status_pending);
+			ictx->program_status_pending = NULL;
+		}
+		if (ictx->state == &input_state_osc_string && ictx->ch < 0x20 &&
+		    ictx->ch != '\007' && ictx->ch != '\033')
+			ictx->osc_invalid = 1;
 
 		/* Find the transition. */
 		if (ictx->state != state ||
@@ -1422,6 +1438,7 @@ input_esc_dispatch(struct input_ctx *ictx)
 
 	switch (entry->type) {
 	case INPUT_ESC_RIS:
+		program_status_clear(ictx->wp);
 		colour_palette_clear(ictx->palette);
 		input_reset_cell(ictx);
 		screen_write_reset(sctx);
@@ -2711,6 +2728,7 @@ input_enter_osc(struct input_ctx *ictx)
 	input_clear(ictx);
 	input_start_ground_timer(ictx);
 	ictx->flags &= ~INPUT_LAST;
+	ictx->osc_invalid = 0;
 }
 
 /* OSC terminator (ST) received. */
@@ -2787,6 +2805,15 @@ input_exit_osc(struct input_ctx *ictx)
 		break;
 	case 133:
 		input_osc_133(ictx, p);
+		break;
+	case 7501:
+		if (ictx->osc_invalid || ictx->input_len +
+		    (ictx->ch == '\007' ? 3 : 4) > 4096)
+			break;
+		if (ictx->ch == '\007')
+			input_osc_7501(ictx, p);
+		else if (ictx->ch == '\033')
+			ictx->program_status_pending = xstrdup(p);
 		break;
 	default:
 		log_debug("%s: unknown '%u'", __func__, option);
@@ -3408,6 +3435,8 @@ input_osc_133(struct input_ctx *ictx, const char *p)
 
 	switch (*p) {
 	case 'A':
+		program_status_prompt(wp);
+		/* FALLTHROUGH */
 	case 'N':
 		if (gl != NULL) {
 			gl->osc133_data.prompt_col = s->cx;
@@ -3869,4 +3898,16 @@ input_report_current_theme(struct input_ctx *ictx)
 			break;
 		}
 	}
+}
+
+/* Answer probes locally and retain only the pane root. */
+static void
+input_osc_7501(struct input_ctx *ictx, const char *p)
+{
+	if (strcmp(p, "?") == 0) {
+		input_reply(ictx, 1, "\033]7501;?:states=idle,working,done,blocked,error:"
+		    "kinds=permission,question,auth\033\\");
+		return;
+	}
+	program_status_parse(ictx->wp, p);
 }

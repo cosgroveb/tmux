@@ -378,6 +378,7 @@ server_destroy_pane(struct window_pane *wp, int notify)
 
 	if (~wp->flags & PANE_STATUSREADY)
 		return;
+	program_status_prompt(wp);
 	remain_on_exit = options_get_number(wp->options, "remain-on-exit");
 	switch (remain_on_exit) {
 	case 0:

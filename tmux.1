@@ -5127,6 +5127,45 @@ option.
 When enabled and
 .Ic mouse
 is on, moving the mouse into a pane selects it.
+.It Xo Ic forward\-program\-status
+.Op Cm on | off
+.Xc
+Forward OSC 7501 program status from every pane in each attached client's
+session, including background windows.
+The default is off.
+When enabled, each terminal is queried for support on attachment, enablement
+and resume.
+A terminal that does not reply within five seconds receives no reports.
+Detach and reattach, resume, or disable and enable the option to retry.
+.Pp
+Each pane retains one root status, including application, message, title,
+blocked kind and progress.
+Application reports with an ID are ignored.
+Application queries receive a local reply even when forwarding is disabled.
+A new shell prompt or process exit clears idle, working and blocked status.
+Done and error status survive until replaced, explicitly cleared, or the pane
+is reset, respawned or destroyed.
+.Pp
+Forwarded records use the reserved
+.Ql tmux
+ID subtree, with pane
+.Ql %42
+mapped to
+.Ql tmux/p42 .
+An absent application becomes
+.Ql tmux .
+Each capable terminal receives a subtree clear before the current session's
+records, and on disable, suspend or normal detach.
+Records follow session membership rather than pane visibility.
+States unsupported by a terminal are omitted, and unsupported blocked kinds
+are omitted from reports.
+.Pp
+The receiving terminal's record limit still applies.
+A disconnected or unwritable terminal cannot receive cleanup.
+The next capable attachment clears stale records in the reserved subtree.
+Other applications must not write to this subtree.
+Concurrent writers and forwarding through another root-only tmux instance
+are unsupported.
 .It Xo Ic get\-clipboard
 .Op Cm both | request | buffer | off
 .Xc

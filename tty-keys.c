@@ -63,6 +63,8 @@ static int	tty_keys_extended_key(struct tty *, const char *, size_t,
 		    size_t *, key_code *);
 static int	tty_keys_mouse(struct tty *, const char *, size_t, size_t *,
 		    struct mouse_event *);
+static int	tty_keys_program_status(struct tty *, const char *, size_t,
+		    size_t *, int);
 static int	tty_keys_clipboard(struct tty *, const char *, size_t,
 		    size_t *, int);
 static int	tty_keys_device_attributes(struct tty *, const char *, size_t,
@@ -91,6 +93,7 @@ static const struct {
 	key_code	key;
 	int	      (*fn)(struct tty *, const char *, size_t, size_t *, int);
 } tty_keys_replies[] = {
+	{ KEYC_REPORT_PROGRAM_STATUS, tty_keys_program_status },
 	{ KEYC_REPORT_CLIPBOARD, tty_keys_clipboard },
 	{ KEYC_REPORT_SYNC, tty_keys_sync },
 	{ KEYC_REPORT_DA, tty_keys_device_attributes },
@@ -669,7 +672,8 @@ tty_keys_reply(struct tty *tty, const char *buf, size_t len,
 
 	for (i = 0; i < nitems(tty_keys_replies); i++) {
 		n = tty_keys_replies[i].fn(tty, buf, len, &kp->size, 0);
-		if (n == 0)
+		if (n == 0 || (n == 1 &&
+		    tty_keys_replies[i].key == KEYC_REPORT_PROGRAM_STATUS))
 			kp->key = tty_keys_replies[i].key;
 		if (n != -1)
 			return (n);
@@ -718,6 +722,13 @@ tty_keys_next1(struct tty *tty, const char *buf, size_t len,
 	case 1:		/* partial */
 		if (!expired)
 			return (1);
+		if (kp->key == KEYC_REPORT_PROGRAM_STATUS &&
+		    (len >= 7 || tty->program_status_key_timer)) {
+			kp->key = KEYC_UNKNOWN;
+			kp->size = len;
+			kp->flags |= TTY_KEY_PARSE_NO_META;
+			return (0);
+		}
 		break;
 	}
 
@@ -924,6 +935,17 @@ first_key:
 partial_key:
 	log_debug("%s: partial key %.*s", c->name, (int)len, buf);
 
+	/* A reply prefix may become recognizable after a shorter Escape wait. */
+	if (kp.key == KEYC_REPORT_PROGRAM_STATUS &&
+	    (len >= 7 || (len > 1 &&
+	    tty->program_status_discard_until > time(NULL))) &&
+	    !tty->program_status_key_timer) {
+		if (event_initialized(&tty->key_timer))
+			evtimer_del(&tty->key_timer);
+		tty->flags &= ~TTY_TIMER;
+		tty->program_status_key_timer = 1;
+	}
+
 	/* If timer is going, check for expiration. */
 	if (tty->flags & TTY_TIMER) {
 		if (evtimer_initialized(&tty->key_timer) &&
@@ -952,6 +974,15 @@ partial_key:
 		if (delay < 500)
 			delay = 500;
 	}
+	if (tty->program_status_key_timer) {
+		delay = TTY_QUERY_TIMEOUT * 1000;
+		if (tty->program_status_discard_until != 0) {
+			delay = (tty->program_status_discard_until -
+			    time(NULL)) * 1000;
+			if (delay <= 0)
+				delay = 1;
+		}
+	}
 	tv.tv_sec = delay / 1000;
 	tv.tv_usec = (delay % 1000) * 1000L;
 
@@ -965,6 +996,7 @@ partial_key:
 	return (0);
 
 complete_key:
+	tty->program_status_key_timer = 0;
 	log_debug("%s: complete key %.*s %#llx", c->name, (int)kp.size, buf,
 	    kp.key);
 
@@ -2008,4 +2040,99 @@ tty_keys_winsz(struct tty *tty, const char *buf, size_t len, size_t *size,
 
 	log_debug("%s: unrecognized window size sequence: %s", c->name, tmp);
 	return (-1);
+}
+
+/* Consume complete replies even after their probe timed out. */
+static int
+tty_keys_program_status(struct tty *tty, const char *buf, size_t len,
+    size_t *size, int apply)
+{
+	const char	 prefix[] = "\033]7501;";
+	size_t		 i, offset = sizeof prefix - 1, end = 0;
+	int		 continuing = tty->program_status_discard_until > time(NULL);
+	int		 terminated = 0, valid = 1;
+	char		*body;
+
+	/* A fresh introducer ends discard of an oversized or abandoned reply. */
+	if (continuing && memcmp(buf, prefix, len < offset ? len : offset) == 0) {
+		if (len < offset)
+			return (1);
+		continuing = 0;
+	}
+	if (continuing)
+		offset = 0;
+	else {
+		if (memcmp(buf, prefix, len < offset ? len : offset) != 0)
+			return (-1);
+		if (len < offset)
+			return (1);
+	}
+	for (i = offset; i < len && i < 4096; i++) {
+		if (buf[i] == '\007') {
+			end = i;
+			*size = i + 1;
+			terminated = 1;
+			break;
+		}
+		if (buf[i] == '\033') {
+			if (i + 1 == len)
+				return (1);
+			end = i;
+			*size = i + (buf[i + 1] == '\\' ? 2 : 0);
+			terminated = 1;
+			valid = buf[i + 1] == '\\';
+			break;
+		}
+		if ((u_char)buf[i] < 0x20 || (u_char)buf[i] > 0x7e)
+			valid = 0;
+	}
+	if (!terminated) {
+		if (len < 4096)
+			return (1);
+		*size = 4096;
+		if (apply && !continuing)
+			tty->program_status_discard_until = time(NULL) + TTY_QUERY_TIMEOUT;
+		return (0);
+	}
+	if (*size == 0)
+		return (-1);
+	if (!apply)
+		return (0);
+	tty->program_status_discard_until = 0;
+	if (continuing || !valid || *size > 4096)
+		return (0);
+	body = xmemdup(buf + offset, end - offset);
+	program_status_reply(tty, body);
+	free(body);
+	return (0);
+}
+
+/* Dispose of buffered reply residue when ownership or the probe changes. */
+void
+tty_keys_reset_program_status(struct tty *tty)
+{
+	const char	 prefix[] = "\033\033]7501;";
+	const char	*buf;
+	size_t		 len, escape = 0;
+
+	if (tty->program_status_key_timer ||
+	    tty->program_status_discard_until > time(NULL)) {
+		len = EVBUFFER_LENGTH(tty->in);
+		buf = EVBUFFER_DATA(tty->in);
+		if (len == 1 && buf[0] == '\033')
+			escape = 1;
+		else if (len > 1 && memcmp(buf, prefix,
+		    len < sizeof prefix - 1 ? len : sizeof prefix - 1) == 0)
+			escape = len == 2 ? 2 : 1;
+		evbuffer_drain(tty->in, len);
+		if (event_initialized(&tty->key_timer))
+			evtimer_del(&tty->key_timer);
+		tty->flags &= ~TTY_TIMER;
+	}
+	tty->program_status_key_timer = 0;
+	tty->program_status_discard_until = 0;
+	if (escape) {
+		evbuffer_add(tty->in, prefix, escape);
+		tty_keys_next(tty);
+	}
 }

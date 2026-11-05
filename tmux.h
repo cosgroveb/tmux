@@ -459,6 +459,7 @@ enum {
 	KEYC_REPORT_CLIPBOARD,
 	KEYC_REPORT_SYNC,
 	KEYC_REPORT_KITTY_GRAPHICS,
+	KEYC_REPORT_PROGRAM_STATUS,
 	KEYC_REPORT_DA,
 	KEYC_REPORT_DA2,
 	KEYC_REPORT_XDA,
@@ -1345,6 +1346,9 @@ struct visible_ranges {
 
 /* Child window structure. */
 struct window_pane {
+	struct program_status	*program_status;
+	uint64_t		 program_status_revision;
+
 	u_int		 id;
 	int		 references;
 	u_int		 active_point;
@@ -1828,7 +1832,12 @@ struct tty_style_ctx {
 #define CLIENT_MAX_TERM_SIZE 10000
 
 /* Client terminal. */
+#define TTY_QUERY_TIMEOUT 5
 struct tty {
+	time_t				 program_status_discard_until;
+	int				 program_status_key_timer;
+	struct program_status_client	*program_status;
+
 	struct client	*client;
 	struct event	 start_timer;
 	struct event	 clipboard_timer;
@@ -3019,6 +3028,7 @@ int	tty_window_bigger(struct tty *);
 int	tty_window_offset(struct tty *, u_int *, u_int *, u_int *, u_int *);
 void	tty_update_window_offset(struct window *);
 void	tty_update_client_offset(struct client *);
+void	tty_flush(struct tty *);
 void	tty_raw(struct tty *, const char *);
 void	tty_attributes(struct tty *, const struct grid_cell *,
 	    const struct tty_style_ctx *);
@@ -3136,6 +3146,7 @@ const struct utf8_data *tty_acs_rounded_borders(int);
 
 /* tty-keys.c */
 void		tty_keys_build(struct tty *);
+void		tty_keys_reset_program_status(struct tty *);
 void		tty_keys_free(struct tty *);
 int		tty_keys_next(struct tty *);
 int		tty_keys_colours(struct tty *, const char *, size_t, size_t *,
@@ -4375,5 +4386,15 @@ int			 json_find_object(struct json_node *, const char *,
 			     struct json_node **, char **);
 int			 json_find_array(struct json_node *, const char *,
 			     struct json_node **, char **);
+
+
+/* program-status.c */
+void	program_status_parse(struct window_pane *, const char *);
+void	program_status_clear(struct window_pane *);
+void	program_status_prompt(struct window_pane *);
+void	program_status_reply(struct tty *, const char *);
+void	program_status_sync(struct client *);
+void	program_status_stop(struct tty *);
+void	program_status_lost(struct tty *);
 
 #endif /* TMUX_H */
