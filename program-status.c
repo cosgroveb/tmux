@@ -47,15 +47,6 @@ static const char *program_status_kinds[] = {
 	"permission", "question", "auth"
 };
 
-struct program_status {
-	enum program_status_state	 state;
-	int				 kind;
-	int				 progress;
-	char				*app;
-	char				*msg;
-	char				*title;
-};
-
 struct program_status_publication {
 	u_int					 id;
 	uint64_t				 revision;
@@ -96,36 +87,6 @@ program_status_index(const char *value, const char **list, size_t count)
 	return (-1);
 }
 
-static void
-program_status_free(struct program_status *ps)
-{
-	if (ps == NULL)
-		return;
-	free(ps->app);
-	free(ps->msg);
-	free(ps->title);
-	free(ps);
-}
-
-void
-program_status_clear(struct window_pane *wp)
-{
-	if (wp == NULL || wp->program_status == NULL)
-		return;
-	program_status_free(wp->program_status);
-	wp->program_status = NULL;
-	wp->program_status_revision++;
-}
-
-void
-program_status_prompt(struct window_pane *wp)
-{
-	if (wp != NULL && wp->program_status != NULL &&
-	    wp->program_status->state != PROGRAM_STATUS_DONE &&
-	    wp->program_status->state != PROGRAM_STATUS_ERROR)
-		program_status_clear(wp);
-}
-
 static char *
 program_status_trim(char *s)
 {
@@ -162,126 +123,6 @@ program_status_pair(char *pair, char **key, char **value)
 	    "0123456789_.,+/=-") != strlen(*value))
 		return (0);
 	return (1);
-}
-
-/* Decode and re-encode to compare padded and unpadded text equally. */
-static int
-program_status_text(const char *value, size_t encoded, size_t decoded,
-    char **result)
-{
-	char	 input[2737], output[2052], canonical[2737];
-	size_t	 len = strlen(value), i;
-	int	 n;
-
-	if (len > encoded || len % 4 == 1)
-		return (0);
-	memcpy(input, value, len);
-	while (len % 4 != 0)
-		input[len++] = '=';
-	input[len] = '\0';
-	n = b64_pton(input, output, sizeof output - 1);
-	if (n < 0 || (size_t)n > decoded)
-		return (0);
-	output[n] = '\0';
-	for (i = 0; i < (size_t)n; i++) {
-		if ((u_char)output[i] < 0x20 || (u_char)output[i] == 0x7f ||
-		    ((u_char)output[i] == 0xc2 && i + 1 < (size_t)n &&
-		    (u_char)output[i + 1] >= 0x80 && (u_char)output[i + 1] <= 0x9f))
-			return (0);
-	}
-	if (!utf8_isvalid(output))
-		return (0);
-	if (b64_ntop(output, n, canonical, sizeof canonical) < 0)
-		return (0);
-	free(*result);
-	*result = xstrdup(canonical);
-	return (1);
-}
-
-static int
-program_status_equal_string(const char *a, const char *b)
-{
-	return (a == NULL ? b == NULL : b != NULL && strcmp(a, b) == 0);
-}
-
-void
-program_status_parse(struct window_pane *wp, const char *body)
-{
-	struct program_status	*ps, *old;
-	char			*copy, *next, *pair, *key, *value;
-	const char		*errstr;
-	int			 child = 0;
-
-	if (wp == NULL)
-		return;
-	ps = xcalloc(1, sizeof *ps);
-	ps->state = PROGRAM_STATUS_NONE;
-	ps->kind = ps->progress = -1;
-	copy = next = xstrdup(body);
-	while ((pair = strsep(&next, ":")) != NULL) {
-		if (!program_status_pair(pair, &key, &value)) {
-			if (strcmp(key, "id") == 0)
-				child = 1;
-			continue;
-		}
-		if (strlen(key) > 16)
-			goto invalid;
-		if (strcmp(key, "state") == 0)
-			ps->state = program_status_index(value, program_status_states,
-			    nitems(program_status_states));
-		else if (strcmp(key, "kind") == 0)
-			ps->kind = program_status_index(value, program_status_kinds,
-			    nitems(program_status_kinds));
-		else if (strcmp(key, "progress") == 0) {
-			ps->progress = strtonum(value, 0, 100, &errstr);
-			if (errstr != NULL || *value == '\0' ||
-			    strspn(value, "0123456789") != strlen(value))
-				ps->progress = -1;
-		} else if (strcmp(key, "app") == 0) {
-			if (strlen(value) > 32)
-				goto invalid;
-			free(ps->app);
-			ps->app = NULL;
-			if (*value != '\0' && strspn(value,
-			    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-			    "0123456789_.+-") == strlen(value))
-				ps->app = xstrdup(value);
-		} else if (strcmp(key, "msg") == 0) {
-			if (!program_status_text(value, 2732, 2048, &ps->msg))
-				goto invalid;
-		} else if (strcmp(key, "title") == 0) {
-			if (!program_status_text(value, 256, 192, &ps->title))
-				goto invalid;
-		} else if (strcmp(key, "id") == 0)
-			child = 1;
-	}
-	if (child || ps->state == PROGRAM_STATUS_NONE)
-		goto invalid;
-	if (ps->state == PROGRAM_STATUS_CLEAR) {
-		program_status_clear(wp);
-		goto invalid;
-	}
-	if (ps->state != PROGRAM_STATUS_BLOCKED)
-		ps->kind = -1;
-	if (ps->state != PROGRAM_STATUS_WORKING && ps->state != PROGRAM_STATUS_BLOCKED)
-		ps->progress = -1;
-	old = wp->program_status;
-	if (old != NULL && old->state == ps->state && old->kind == ps->kind &&
-	    old->progress == ps->progress &&
-	    program_status_equal_string(old->app, ps->app) &&
-	    program_status_equal_string(old->msg, ps->msg) &&
-	    program_status_equal_string(old->title, ps->title))
-		goto invalid;
-	program_status_free(old);
-	wp->program_status = ps;
-	wp->program_status_revision++;
-	free(copy);
-	return;
-
-invalid:
-	/* No partially validated fields ever reach the pane. */
-	free(copy);
-	program_status_free(ps);
 }
 
 static void
@@ -393,18 +234,20 @@ program_status_publish(struct tty *tty, struct window_pane *wp)
 {
 	struct program_status		*ps = wp->program_status;
 	struct program_status_client	*psc = tty->program_status;
-	char				 buffer[4097], progress[32];
+	char				 buffer[4097], progress[32], encoded[2737];
 
 	xsnprintf(buffer, sizeof buffer, "\033]7501;state=%s:id=tmux/p%u:app=%s",
-	    program_status_states[ps->state], wp->id,
+	    ps->state, wp->id,
 	    ps->app != NULL ? ps->app : "tmux");
 	if (ps->msg != NULL) {
 		strlcat(buffer, ":msg=", sizeof buffer);
-		strlcat(buffer, ps->msg, sizeof buffer);
+		b64_ntop(ps->msg, strlen(ps->msg), encoded, sizeof encoded);
+		strlcat(buffer, encoded, sizeof buffer);
 	}
 	if (ps->title != NULL) {
 		strlcat(buffer, ":title=", sizeof buffer);
-		strlcat(buffer, ps->title, sizeof buffer);
+		b64_ntop(ps->title, strlen(ps->title), encoded, sizeof encoded);
+		strlcat(buffer, encoded, sizeof buffer);
 	}
 	if (ps->kind != -1 && (psc->kinds & (1U << ps->kind))) {
 		strlcat(buffer, ":kind=", sizeof buffer);
@@ -482,7 +325,8 @@ program_status_sync(struct client *c)
 		wp = window_pane_find_by_id(pub->id);
 		if (wp != NULL && session_has(c->session, wp->window) &&
 		    wp->program_status != NULL &&
-		    (psc->states & (1U << wp->program_status->state)))
+		    (psc->states & (1U << program_status_index(wp->program_status->state,
+		    program_status_states, PROGRAM_STATUS_CLEAR))))
 			continue;
 		program_status_remove(tty, pub->id);
 		RB_REMOVE(program_status_publications, &psc->published, pub);
@@ -490,7 +334,8 @@ program_status_sync(struct client *c)
 	}
 	RB_FOREACH(wp, window_pane_tree, &all_window_panes) {
 		if (!session_has(c->session, wp->window) || wp->program_status == NULL ||
-		    !(psc->states & (1U << wp->program_status->state)))
+		    !(psc->states & (1U << program_status_index(wp->program_status->state,
+		    program_status_states, PROGRAM_STATUS_CLEAR))))
 			continue;
 		find.id = wp->id;
 		pub = RB_FIND(program_status_publications, &psc->published, &find);

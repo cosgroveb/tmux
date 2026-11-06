@@ -250,7 +250,26 @@ def publication(test):
     assert terminal.frames().index(b'state=clear:id=tmux') < len(terminal.frames()) - 1
     terminal.clear_capture()
     test.report(b'state=working:app=build:msg=SGVsbG8=:title=VGVzdA==:progress=42')
-    assert terminal.frames() == [], 'unchanged report resent'
+    terminal.wait_frame(b'state=working:id=tmux/p0:app=build:msg=SGVsbG8=:title=VGVzdA==:progress=42')
+    other = Terminal(test)
+    other.support()
+    frame = b'state=working:id=tmux/p0:app=build:msg=SGVsbG8=:title=VGVzdA==:progress=42'
+    other.wait_frame(frame)
+    for client in (terminal, other):
+        client.clear_capture()
+    test.report(b'state=working:app=build:msg=SGVsbG8=:title=VGVzdA==:progress=42')
+    for client in (terminal, other):
+        client.wait_frame(frame)
+        client.clear_capture()
+    for body in (b'state=done:id=child', b'state=done:title=AA=='):
+        test.report(body)
+        for client in (terminal, other):
+            assert client.frames() == [], 'rejected report published'
+    # One pane write may coalesce intermediate revisions. Require its final state.
+    test.emit((OSC + b'state=blocked:kind=auth' + ST) * 20 +
+              OSC + b'state=error:app=latest' + ST)
+    for client in (terminal, other):
+        client.wait_frame(b'state=error:id=tmux/p0:app=latest')
 
 
 def parser(test):
@@ -263,7 +282,8 @@ def parser(test):
     terminal.wait_frame(expected)
     terminal.clear_capture()
     invalid = [b'state=done:msg=A===', b'state=done:msg=AA==',
-        b'state=done:msg=woA=', b'state=done:msg=/w==',
+        b'state=done:msg=woA=', b'state=idle:kind=anything:title=AA==:progress=no',
+        b'state=done:title=AA==:title=b2s=', b'state=done:msg=/w==',
         b'state=done:app=' + b'a'*33, b'state=done:msg=' + b'A'*2733,
         b'state=done:title=' + b'A'*257,
         b'state=done:abcdefghijklmnopq=x', b'state=future',
@@ -277,6 +297,10 @@ def parser(test):
         assert terminal.frames() == [], ('aborted frame accepted', abort)
     test.emit(OSC + b'state=do\000ne' + ST)
     assert terminal.frames() == [], 'altered C0 payload accepted'
+    for raw in (b'\033]07501;state=done\007', b'\033]75\00001;state=done\007',
+                b'\033\000]7501;state=done\007', OSC + b'state=done\033\000\\'):
+        test.emit(raw)
+        assert terminal.frames() == [], ('altered raw framing accepted', raw)
     test.partial(OSC + b'state=done' + b'\033')
     assert terminal.frames() == [], 'unconfirmed ST accepted'
     test.emit(b'\\')
@@ -289,20 +313,22 @@ def parser(test):
     terminal.wait_frame(b'state=working:id=tmux/p0:app=good-app:msg=SGk=:progress=100')
     terminal.clear_capture()
     test.report(b'state=working:app=good-app:msg=SGk=:progress=100')
-    assert terminal.frames() == [], 'optional padding changed normalized report'
+    terminal.wait_frame(b'state=working:id=tmux/p0:app=good-app:msg=SGk=:progress=100')
     test.report(b'state=done:app=' + b'a'*32 + b':msg=' + base64.b64encode(b'm'*2048)
                 + b':title=' + base64.b64encode(b't'*192))
     terminal.wait_frame(b'state=done:id=tmux/p0:app=' + b'a'*32 + b':msg='
                         + base64.b64encode(b'm'*2048) + b':title=' + base64.b64encode(b't'*192))
     test.report(b'state=working')
     terminal.clear_capture()
-    body = b'state=error:extra=' + b'x'*(4087-len(b'state=error:extra='))
-    test.report(body)
-    terminal.wait_frame(b'state=error:id=tmux/p0:app=tmux')
-    terminal.clear_capture()
-    body = b'state=working:extra=' + b'x'*(4088-len(b'state=working:extra='))
-    test.report(body)
-    assert terminal.frames() == [], '4097 byte frame accepted'
+    for end in (ST, b'\007'):
+        size = 4096 - len(OSC) - len(end)
+        body = b'state=error:extra=' + b'x'*(size-len(b'state=error:extra='))
+        test.report(body, end=end)
+        terminal.wait_frame(b'state=error:id=tmux/p0:app=tmux')
+        terminal.clear_capture()
+        body = b'state=working:extra=' + b'x'*(size+1-len(b'state=working:extra='))
+        test.report(body, end=end)
+        assert terminal.frames() == [], '4097 byte frame accepted'
     for state in (b'idle', b'working', b'blocked', b'done', b'error'):
         test.report(b'state=' + state)
         terminal.clear_capture()
@@ -448,15 +474,14 @@ def lifecycle(test):
                    'retained dead pane')
         terminal.pump(.1)
         frame = b'state=' + state + b':id=tmux/p' + pane[0][1:].encode() + b':app=tmux'
-        if state in (b'done', b'error'):
+        # A new capability snapshot proves final retained state after death.
+        test.cmd('set', '-s', 'forward-program-status', 'off')
+        terminal.clear_capture()
+        test.cmd('set', '-s', 'forward-program-status', 'on')
+        terminal.support()
+        if state in (b'idle', b'done', b'error'):
             terminal.wait_frame(frame)
         else:
-            # Reattach confirms replay of final retained state, independently
-            # of whether an intermediate report was coalesced before PTY exit.
-            test.cmd('set', '-s', 'forward-program-status', 'off')
-            terminal.clear_capture()
-            test.cmd('set', '-s', 'forward-program-status', 'on')
-            terminal.support()
             assert frame not in terminal.frames(), (state, 'dead pane replayed transient status')
         test.cmd('kill-pane', '-t', pane[0])
     test.report(b'state=working')
@@ -637,7 +662,7 @@ def disable_clipboard(test):
 
 def run():
     binary, mode = sys.argv[1:]
-    assert mode in ('local', 'parser', 'probe', 'sync', 'all', 'fragment-timer', 'discard-retry', 'disable-flush', 'disable-clipboard')
+    assert mode in ('local', 'parser', 'probe', 'sync', 'all', 'fragment-timer', 'discard-retry', 'disable-flush', 'disable-clipboard', 'lifecycle')
     suites = [('local', 'local', local), ('parser', 'parser', parser),
               ('probe', 'publication', publication),
               ('probe', 'fragment-timer', fragment_timer),

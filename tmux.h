@@ -1344,6 +1344,16 @@ struct visible_ranges {
 	u_int			 size;    /* allocated capacity of ranges */
 };
 
+/* Retained program status. */
+struct program_status {
+	char		*state;
+	char		*app;
+	char		*msg;
+	char		*title;
+	int		 kind;
+	int		 progress;
+};
+
 /* Child window structure. */
 struct window_pane {
 	struct program_status	*program_status;
@@ -3888,6 +3898,9 @@ void		 window_pane_set_prompt(struct window_pane *, struct client *,
 		     struct cmd_find_state *, const char *, const char *,
 		     status_prompt_input_cb, prompt_free_cb, void *, int,
 		     enum prompt_type);
+void		 window_pane_set_program_status(struct window_pane *,
+		     struct program_status *);
+void		 window_pane_clear_program_status(struct window_pane *);
 void		 window_pane_clear_prompt(struct window_pane *);
 int		 window_pane_has_prompt(struct window_pane *);
 void		 window_pane_update_prompt(struct window_pane *, const char *,
@@ -4389,9 +4402,6 @@ int			 json_find_array(struct json_node *, const char *,
 
 
 /* program-status.c */
-void	program_status_parse(struct window_pane *, const char *);
-void	program_status_clear(struct window_pane *);
-void	program_status_prompt(struct window_pane *);
 void	program_status_reply(struct tty *, const char *);
 void	program_status_sync(struct client *);
 void	program_status_stop(struct tty *);

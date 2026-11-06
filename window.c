@@ -1633,7 +1633,7 @@ window_pane_utmp_remove(__unused struct window_pane *wp)
 static void
 window_pane_destroy(struct window_pane *wp)
 {
-	program_status_clear(wp);
+	window_pane_clear_program_status(wp);
 	window_pane_wait_finish(wp);
 	spawn_editor_finish(wp);
 
@@ -1985,6 +1985,32 @@ window_pane_set_prompt(struct window_pane *wp, struct client *c,
 
 	prompt_incremental_start(wp->prompt);
 	window_fire_pane_prompt("pane-prompt-opened", wp, type);
+}
+
+/* Replace a completely validated retained report. */
+void
+window_pane_set_program_status(struct window_pane *wp, struct program_status *ps)
+{
+	window_pane_clear_program_status(wp);
+	wp->program_status = ps;
+	wp->program_status_revision++;
+}
+
+/* Clear the retained program status. */
+void
+window_pane_clear_program_status(struct window_pane *wp)
+{
+	struct program_status *ps = wp->program_status;
+
+	if (ps == NULL)
+		return;
+	free(ps->state);
+	free(ps->app);
+	free(ps->msg);
+	free(ps->title);
+	free(ps);
+	wp->program_status = NULL;
+	wp->program_status_revision++;
 }
 
 /* Close a pane prompt. */

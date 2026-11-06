@@ -327,7 +327,7 @@ spawn_pane(struct spawn_context *sc, char **cause)
 			close(sc->wp0->fd);
 			sc->wp0->fd = -1;
 		}
-		program_status_clear(sc->wp0);
+		window_pane_clear_program_status(sc->wp0);
 		window_pane_reset_mode_all(sc->wp0);
 		screen_reinit(&sc->wp0->base);
 		if (sc->wp0->ictx != NULL) {
