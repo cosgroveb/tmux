@@ -190,6 +190,7 @@ dist_tmux_SOURCES = \
 	paste.c \
 	popup.c \
 	proc.c \
+	program-status.c \
 	prompt-history.c \
 	prompt.c \
 	regsub.c \

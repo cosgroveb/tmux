@@ -82,7 +82,6 @@ static void	tty_write_one(void (*)(struct tty *, const struct tty_ctx *),
 #define TTY_BLOCK_START(tty) (1 + ((tty)->sx * (tty)->sy) * 8)
 #define TTY_BLOCK_STOP(tty) (1 + ((tty)->sx * (tty)->sy) / 8)
 
-#define TTY_QUERY_TIMEOUT 5
 #define TTY_REQUEST_LIMIT 30
 
 static struct tty_style_ctx tty_default_style_ctx = {
@@ -236,6 +235,7 @@ tty_block_maybe(struct tty *tty)
 
 	log_debug("%s: can't keep up, %zu discarded", c->name, size);
 
+	program_status_lost(tty);
 	evbuffer_drain(tty->out, size);
 	c->discarded += size;
 
@@ -458,6 +458,8 @@ tty_stop_tty(struct tty *tty)
 
 	if (!(tty->flags & TTY_STARTED))
 		return;
+	tty_keys_reset_program_status(tty);
+	program_status_stop(tty);
 	tty->flags &= ~TTY_STARTED;
 
 	evtimer_del(&tty->start_timer);
@@ -573,6 +575,31 @@ tty_update_features(struct tty *tty)
 	tty_invalidate(tty);
 }
 
+/* Flush before teardown, allowing five milliseconds and five blocked retries. */
+void
+tty_flush(struct tty *tty)
+{
+	uint64_t	 end = get_timer() + 5;
+	u_int		 retries = 0;
+	int		 n;
+
+	while (EVBUFFER_LENGTH(tty->out) != 0 && get_timer() < end) {
+		n = evbuffer_write(tty->out, tty->client->fd);
+		if (n > 0)
+			continue;
+		if (n == -1 && errno != EAGAIN && errno != EINTR)
+			break;
+		if (++retries == 5)
+			break;
+		usleep(100);
+	}
+	if (EVBUFFER_LENGTH(tty->out) != 0) {
+		evbuffer_drain(tty->out, EVBUFFER_LENGTH(tty->out));
+		tty_invalidate(tty);
+		tty->client->flags |= CLIENT_ALLREDRAWFLAGS;
+	}
+}
+
 void
 tty_raw(struct tty *tty, const char *s)
 {
@@ -645,6 +672,7 @@ tty_add(struct tty *tty, const char *buf, size_t len)
 	struct client	*c = tty->client;
 
 	if (tty->flags & TTY_BLOCK) {
+		program_status_lost(tty);
 		tty->discarded += len;
 		return;
 	}

@@ -4975,6 +4975,49 @@ option.
 When enabled and
 .Ic mouse
 is on, moving the mouse into a pane selects it.
+.It Xo Ic forward\-program\-status
+.Op Cm on | off
+.Xc
+Forward OSC 7501 program status from every pane in each attached client's
+session, including background windows.
+The default is off.
+When enabled, each terminal is queried for support on attachment, enablement
+and resume.
+A terminal that does not reply within five seconds receives no reports.
+Detach and reattach, resume, or disable and enable the option to retry.
+.Pp
+Each pane retains one root status, including application, message, title,
+blocked kind and progress.
+Application reports with an ID are ignored.
+Application queries receive a local reply even when forwarding is disabled.
+A new shell prompt clears idle, working and blocked status.
+After final output drains and process exit is confirmed, working and blocked
+status are cleared; idle status is retained.
+Done and error status survive until replaced, explicitly cleared, or the pane
+is reset, respawned or destroyed.
+.Pp
+Forwarded records use the reserved
+.Ql tmux
+ID subtree, with pane
+.Ql %42
+mapped to
+.Ql tmux/p42 .
+An absent application becomes
+.Ql tmux .
+Each capable terminal receives a subtree clear before the current session's
+records, and on disable, suspend or normal detach.
+Records follow session membership rather than pane visibility.
+Each accepted application report may be forwarded, even when unchanged.
+Reports received before a synchronization pass may coalesce to the latest status.
+States unsupported by a terminal are omitted, and unsupported blocked kinds
+are omitted from reports.
+.Pp
+The receiving terminal's record limit still applies.
+A disconnected or unwritable terminal cannot receive cleanup.
+The next capable attachment clears stale records in the reserved subtree.
+Other applications must not write to this subtree.
+Concurrent writers and forwarding through another root-only tmux instance
+are unsupported.
 .It Xo Ic get\-clipboard
 .Op Ic both | request | buffer | off
 .Xc
@@ -7464,6 +7507,10 @@ The following variables are available, where appropriate:
 .It Li "pane_private_modes" Ta "" Ta "List of enabled DECSET private modes"
 .It Li "pane_pb_state" Ta "" Ta "Pane progress bar state, one of hidden, normal, error, indeterminate, paused (can be set by application)"
 .It Li "pane_pb_progress" Ta "" Ta "Pane progress bar progress percentage (can be set by application)"
+.It Li "pane_program_message" Ta "" Ta "Decoded OSC 7501 program status message"
+.It Li "pane_program_name" Ta "" Ta "OSC 7501 application name"
+.It Li "pane_program_result_unseen" Ta "" Ta "1 if an OSC 7501 done or error result is unacknowledged"
+.It Li "pane_program_state" Ta "" Ta "OSC 7501 state: idle, working, done, blocked or error"
 .It Li "pane_right" Ta "" Ta "Right of pane"
 .It Li "pane_search_string" Ta "" Ta "Last search string in copy mode"
 .It Li "pane_start_command" Ta "" Ta "Command pane started with"
@@ -7573,6 +7620,47 @@ The following variables are available, where appropriate:
 .It Li "window_zoomed_flag" Ta "" Ta "1 if window is zoomed"
 .It Li "wrap_flag" Ta "" Ta "Pane wrap flag"
 .El
+.Pp
+.Nm
+retains one OSC 7501 root program status record per pane and answers its
+capability query.
+Reports with an
+.Li id
+are ignored.
+Each accepted report replaces the state, application name, decoded message,
+kind, decoded title and progress.
+Omitted fields become empty.
+Unknown fields are ignored.
+The record is cleared by
+.Li state=clear ,
+a full terminal reset (RIS), or pane respawn.
+A new shell prompt (OSC 133 A) clears idle, working and blocked records,
+but retains done and error results.
+OSC 133 N preserves all records.
+Process exit clears working and blocked records before exit hooks run,
+including in retained dead panes, and preserves idle, done and error records.
+Switching screens, a soft reset, moving the pane and detaching clients preserve
+status.
+.Pp
+Each accepted done or error report sets
+.Li pane_program_result_unseen
+to 1, including an identical report after acknowledgement.
+Other accepted reports set it to 0.
+Selecting a pane or window, attaching a client, or switching its session
+acknowledges the selected pane's result by setting unseen to 0.
+Only an actual selection change acknowledges a result.
+A result arriving in the selected pane stays unseen through redraws and input.
+Acknowledgement preserves the state, name and message and is shared by all
+clients because the flag belongs to the pane.
+For example, this format displays blocked records and unseen results:
+.Bd -literal -offset indent
+#{?#{||:#{==:#{pane_program_state},blocked},#{pane_program_result_unseen}},#{pane_program_name}: #{pane_program_state} #{pane_program_message},}
+.Ed
+.Pp
+These records work without an outer terminal consumer.
+They are independent of OSC 9;4 progress.
+Forwarding to attached terminals requires
+.Ic forward-program-status .
 .Sh STYLES
 .Nm
 offers various options to specify the colour and attributes of aspects of the

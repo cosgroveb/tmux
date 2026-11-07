@@ -1,0 +1,33 @@
+class Tmux < Formula
+  desc "Terminal multiplexer with personal OSC7501 patches"
+  homepage "https://github.com/cosgroveb/tmux"
+  url "https://github.com/cosgroveb/tmux/releases/download/personal-@VERSION@/tmux-@VERSION@.tar.gz"
+  version "@VERSION@"
+  sha256 "@SOURCE_SHA256@"
+  license "ISC"
+
+  depends_on "autoconf" => :build
+  depends_on "automake" => :build
+  depends_on "pkgconf" => :build
+  depends_on "libevent"
+  depends_on "ncurses"
+  depends_on "utf8proc"
+  depends_on :macos => :tahoe
+
+  def install
+    system "sh", "autogen.sh"
+    system "./configure", "--prefix=#{prefix}", "--enable-utf8proc"
+    system "make", "install"
+    pkgshare.install "COPYING"
+    (share/"tmux/personal-build.json").write <<~JSON
+      {"source_sha":"@SOURCE_SHA@","upstream_sha":"7f2a35ad3321f9ba57a1062ca73b1f3ff26aca53","version":"@VERSION@","target":"macos-26-arm64"}
+    JSON
+  end
+
+  test do
+    assert_equal "tmux 3.8", shell_output("#{bin}/tmux -V").strip
+    identity = JSON.parse((share/"tmux/personal-build.json").read)
+    assert_equal version.to_s, identity.fetch("version")
+    assert_equal "@SOURCE_SHA@", identity.fetch("source_sha")
+  end
+end

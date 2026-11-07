@@ -1300,6 +1300,16 @@ struct visible_ranges {
 	u_int			 size;    /* allocated capacity of ranges */
 };
 
+/* Retained program status. */
+struct program_status {
+	char		*state;
+	char		*app;
+	char		*msg;
+	char		*title;
+	int		 kind;
+	int		 progress;
+};
+
 /* Child window structure. */
 struct window_pane {
 	u_int		 id;
@@ -1382,6 +1392,10 @@ struct window_pane {
 	struct event	 sync_timer;
 
 	struct input_ctx *ictx;
+
+	int		 program_result_unseen;
+	struct program_status *program_status;
+	uint64_t	 program_status_revision;
 
 	struct grid_cell cached_gc;
 	struct grid_cell cached_active_gc;
@@ -1756,7 +1770,12 @@ struct tty_style_ctx {
 };
 
 /* Client terminal. */
+#define TTY_QUERY_TIMEOUT 5
 struct tty {
+	time_t				 program_status_discard_until;
+	int				 program_status_key_timer;
+	struct program_status_client	*program_status;
+
 	struct client	*client;
 	struct event	 start_timer;
 	struct event	 clipboard_timer;
@@ -2931,6 +2950,7 @@ int	tty_window_bigger(struct tty *);
 int	tty_window_offset(struct tty *, u_int *, u_int *, u_int *, u_int *);
 void	tty_update_window_offset(struct window *);
 void	tty_update_client_offset(struct client *);
+void	tty_flush(struct tty *);
 void	tty_raw(struct tty *, const char *);
 void	tty_attributes(struct tty *, const struct grid_cell *,
 	    const struct tty_style_ctx *);
@@ -3053,6 +3073,7 @@ const struct utf8_data *tty_acs_rounded_borders(int);
 
 /* tty-keys.c */
 void		tty_keys_build(struct tty *);
+void		tty_keys_reset_program_status(struct tty *);
 void		tty_keys_free(struct tty *);
 int		tty_keys_next(struct tty *);
 int		tty_keys_colours(struct tty *, const char *, size_t, size_t *,
@@ -3783,6 +3804,10 @@ void		 window_pane_set_prompt(struct window_pane *, struct client *,
 		     status_prompt_input_cb, prompt_free_cb, void *, int,
 		     enum prompt_type);
 void		 window_pane_clear_prompt(struct window_pane *);
+void		 window_pane_acknowledge_program_result(struct window_pane *);
+void		 window_pane_set_program_status(struct window_pane *,
+		     struct program_status *);
+void		 window_pane_clear_program_status(struct window_pane *);
 int		 window_pane_has_prompt(struct window_pane *);
 void		 window_pane_update_prompt(struct window_pane *, const char *,
 		     const char *);
@@ -4104,7 +4129,7 @@ int		 session_next(struct session *, int);
 int		 session_previous(struct session *, int);
 int		 session_select(struct session *, int);
 int		 session_last(struct session *);
-int		 session_set_current(struct session *, struct winlink *);
+int		 session_set_current(struct session *, struct winlink *, int);
 struct session_group *session_group_contains(struct session *);
 struct session_group *session_group_find(const char *);
 struct session_group *session_group_new(const char *);
@@ -4309,5 +4334,12 @@ int			 json_find_object(struct json_node *, const char *,
 			     struct json_node **, char **);
 int			 json_find_array(struct json_node *, const char *,
 			     struct json_node **, char **);
+
+
+/* program-status.c */
+void	program_status_reply(struct tty *, const char *);
+void	program_status_sync(struct client *);
+void	program_status_stop(struct tty *);
+void	program_status_lost(struct tty *);
 
 #endif /* TMUX_H */
