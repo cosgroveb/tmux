@@ -40,6 +40,7 @@ def main():
     require(os.environ.get('GITHUB_ACTIONS') == 'true' and os.uname().sysname == 'Darwin',
             'requires a disposable macOS Actions runner')
     require(args.formula == 'cosgroveb/tap/tmux' and args.target == 'macos-26-arm64', 'wrong target')
+    run('brew', 'trust', '--formula', args.formula)
     formula_path = Path(output('brew', '--repository', 'cosgroveb/tap')) / 'Formula/tmux.rb'
     final_formula = formula_path.read_text()
     info = json.loads(output('brew', 'info', '--json=v2', args.formula))['formulae'][0]
@@ -154,6 +155,7 @@ def main():
         template = template.replace('@' + key + '@', value)
     try:
         formula_path.write_text(template)
+        run('brew', 'trust', '--formula', args.formula)
         cache = Path(output('brew', '--cache', '--build-from-source', args.formula))
         cache.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(args.archive, cache)
