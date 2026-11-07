@@ -48,7 +48,8 @@ def pane_worker(fifo, replies):
 class Terminal:
     def __init__(self, test, session='a'):
         self.test = test
-        self.master, slave = pty.openpty()
+        self.master, self.slave = pty.openpty()
+        slave = self.slave
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
         def controlling_tty():
             os.setsid()
@@ -56,7 +57,7 @@ class Terminal:
         self.proc = subprocess.Popen(test.args + ['attach', '-t', session],
             stdin=slave, stdout=slave, stderr=slave, env=test.env,
             preexec_fn=controlling_tty)
-        os.close(slave)
+        # Keep the shell's side open: macOS discards unread output on final close.
         self.raw = b''
         test.terminals.append(self)
         test.until(lambda: len(test.cmd('list-clients', '-F', '#{client_name}').splitlines())
@@ -104,17 +105,22 @@ class Terminal:
         self.wait_frame(b'state=clear:id=tmux')
 
     def close(self):
-        if self.proc.poll() is None:
-            self.proc.terminate()
-        end = time.monotonic() + 5
-        while self.proc.poll() is None and time.monotonic() < end:
-            self.pump(.05)
-        if self.proc.poll() is None:
-            self.proc.kill()
-        self.proc.wait(timeout=5)
-        if self.master is not None:
-            os.close(self.master)
-            self.master = None
+        try:
+            if self.proc.poll() is None:
+                self.proc.terminate()
+            end = time.monotonic() + 5
+            while self.proc.poll() is None and time.monotonic() < end:
+                self.pump(.05)
+            if self.proc.poll() is None:
+                self.proc.kill()
+            self.proc.wait(timeout=5)
+        finally:
+            if self.master is not None:
+                os.close(self.master)
+                self.master = None
+            if self.slave is not None:
+                os.close(self.slave)
+                self.slave = None
 
 
 
@@ -431,7 +437,10 @@ def sync(test):
     terminal.wait_frame(b'state=clear:id=tmux/p2')
     terminal.clear_capture()
     test.cmd('detach-client')
-    test.until(lambda: terminal.proc.poll() is not None, 'detach')
+    def detached():
+        terminal.pump(.02)
+        return terminal.proc.poll() is not None
+    test.until(detached, 'detach')
     terminal.pump(.1)
     assert b'state=clear:id=tmux' in terminal.frames(), 'detach clear lost'
     clear = terminal.raw.index(OSC + b'state=clear:id=tmux' + ST)
