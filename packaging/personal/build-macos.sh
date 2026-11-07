@@ -29,6 +29,7 @@ for key, value in {'VERSION': version, 'SOURCE_SHA': sha,
     text = text.replace('@' + key + '@', value)
 pathlib.Path(dest).write_text(text)
 PY
+brew trust --formula "$formula"
 source_cache=$(brew --cache --build-from-source "$formula")
 mkdir -p "$(dirname "$source_cache")"
 cp "$archive" "$source_cache"

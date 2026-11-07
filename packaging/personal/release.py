@@ -249,6 +249,7 @@ def publish(args):
         run('git', '-C', str(checkout), 'config', '--add', 'credential.helper', '!gh auth git-credential')
         formula = checkout / 'Formula/tmux.rb'
         subprocess.run(['brew', 'tap', 'cosgroveb/tap'], check=True)
+        subprocess.run(['brew', 'trust', '--formula', 'cosgroveb/tap/tmux'], check=True)
         audit_formula = Path(run('brew', '--repository', 'cosgroveb/tap')) / 'Formula/tmux.rb'
         def check():
             head = gh('api', f'repos/{REPO}/git/ref/heads/personal', '--jq', '.object.sha')

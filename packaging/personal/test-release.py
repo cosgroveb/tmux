@@ -87,6 +87,7 @@ class SimulatedPublication:
         self.fail_latest_once = False
         self.fail_upload_name = None
         self.events = []
+        self.formula_trusted = False
         self.source_changes_after_push = False
         self.newer_tap_after_push = False
 
@@ -172,6 +173,11 @@ class SimulatedPublication:
             (target / name).write_bytes(self.assets[name])
             self.events.append('download:' + name)
         elif args[0] in ('brew', 'dpkg'):
+            if args[:2] == ['brew', 'trust']:
+                assert args == ['brew', 'trust', '--formula', 'cosgroveb/tap/tmux'], args
+                self.formula_trusted = True
+            elif args[:2] == ['brew', 'audit'] and not self.formula_trusted:
+                raise subprocess.CalledProcessError(1, args, stderr='Refusing to load untrusted formula')
             self.events.append(args[0] + '-check')
         elif args[0] == 'git':
             command = args[3:]
