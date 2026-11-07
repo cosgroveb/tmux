@@ -50,7 +50,7 @@ def fixture(directory):
         m['targets'][target] = record
     root = f'https://github.com/cosgroveb/tmux/releases/download/{m["tag"]}'
     (directory / 'tmux.rb').write_text(
-        f'class Tmux < Formula\n  version "{VERSION}"\n'
+        'class Tmux < Formula\n'
         f'  url "{root}/{source}"\n  sha256 "{m["source"]["sha256"]}"\n'
         f'  bottle do\n    root_url "{root}"\n'
         f'    sha256 cellar: :any, arm64_tahoe: "{m["targets"]["macos-26-arm64"]["sha256"]}"\n  end\n'
@@ -75,7 +75,9 @@ class SimulatedPublication:
         self.head = SOURCE
         self.tag_sha = SOURCE
         self.latest = None
-        self.tap_formula = 'class Tmux < Formula\n  version "2026.11.6.22.1"\nend\n'
+        self.tap_formula = ('class Tmux < Formula\n'
+                            '  url "https://github.com/cosgroveb/tmux/releases/download/'
+                            'personal-2026.11.6.22.1/tmux-2026.11.6.22.1.tar.gz"\nend\n')
         self.tap_commit = 'c' * 40
         self.tap_history = {self.tap_commit: self.tap_formula}
         self.checkout = None
@@ -279,6 +281,26 @@ class SimulatedPolicyTests(unittest.TestCase):
         for bad in ('3.8', '2026.11.07.23.1', '2026.11.7.23', '2026.11.7.23.1/other'):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 release.version(bad)
+
+    def test_formula_version_inferred_from_release_url(self):
+        text = (self.directory / 'tmux.rb').read_text()
+        self.assertEqual(release.formula_version(text), VERSION)
+        self.assertIsNone(release.formula_version(None))
+        release.verify_formula(self.directory / 'tmux.rb', self.m)
+        for bad in (
+                text.replace('personal-' + VERSION, 'personal-2026.11.6.22.1'),
+                text.replace('github.com/cosgroveb/tmux/', 'github.com/other/tmux/'),
+                text.replace(VERSION, '2026.11.07.23.1'),
+                text + '  version "2026.11.6.22.1"\n',
+                text.replace('  url ', '  # url ')):
+            with self.subTest(formula=bad), self.assertRaises(ValueError):
+                release.formula_version(bad)
+
+    def test_formula_version_must_match_manifest(self):
+        path = self.directory / 'tmux.rb'
+        path.write_text(path.read_text().replace(VERSION, '2026.11.6.22.1'))
+        with self.assertRaisesRegex(ValueError, 'formula version mismatch'):
+            release.verify_formula(path, self.m)
 
     def test_complete_matrix_and_optional_staging_receipt(self):
         self.assertEqual(release.validate(self.directory), self.m)

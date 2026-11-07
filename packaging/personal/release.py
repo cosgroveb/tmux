@@ -146,7 +146,7 @@ def verify_formula(path, m):
     root = f'https://github.com/{REPO}/releases/download/{m["tag"]}'
     source = m['source']
     bottle = m['targets']['macos-26-arm64']
-    require(re.search(r'^  version "' + re.escape(m['version']) + r'"$', text, re.M), 'formula version mismatch')
+    require(formula_version(text) == m['version'], 'formula version mismatch')
     require(f'  url "{root}/{source["asset"]}"' in text and f'  sha256 "{source["sha256"]}"' in text, 'formula source mismatch')
     require(f'root_url "{root}"' in text, 'formula bottle root mismatch')
     require(re.search(r'sha256[^\n]*arm64_tahoe: "' + bottle['sha256'] + '"', text), 'formula bottle hash mismatch')
@@ -208,8 +208,12 @@ def latest_version():
 def formula_version(text):
     if text is None:
         return None
-    match = re.search(r'^  version "([^"]+)"$', text, re.M)
-    require(match, 'tap formula has no explicit fork version')
+    match = re.search(r'^  url "https://github\.com/cosgroveb/tmux/releases/download/'
+                      r'personal-([^/"\n]+)/tmux-\1\.tar\.gz"$', text, re.M)
+    require(match, 'tap formula has no matching fork release URL')
+    version(match[1])
+    require(all(value == match[1] for value in re.findall(r'^  version "([^"]+)"$', text, re.M)),
+            'explicit formula version differs from release URL')
     return match[1]
 
 

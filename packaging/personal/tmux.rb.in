@@ -2,7 +2,6 @@ class Tmux < Formula
   desc "Terminal multiplexer with personal OSC7501 patches"
   homepage "https://github.com/cosgroveb/tmux"
   url "https://github.com/cosgroveb/tmux/releases/download/personal-@VERSION@/tmux-@VERSION@.tar.gz"
-  version "@VERSION@"
   sha256 "@SOURCE_SHA256@"
   license "ISC"
 
@@ -11,9 +10,9 @@ class Tmux < Formula
   depends_on "pkgconf" => :build
   depends_on "jemalloc"
   depends_on "libevent"
+  depends_on macos: :tahoe
   depends_on "ncurses"
   depends_on "utf8proc"
-  depends_on :macos => :tahoe
 
   def install
     system "sh", "autogen.sh"
