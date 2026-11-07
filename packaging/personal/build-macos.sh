@@ -58,7 +58,7 @@ pathlib.Path('bottle-metadata.json').write_text(json.dumps(entry, indent=2) + '\
 PY
 # Merge the real metadata; preserve Homebrew's relocation and cellar decisions.
 brew bottle --merge --write --no-commit ./*.bottle.json
-brew audit "$formula"
+brew audit --strict "$formula"
 brew info --json=v2 "$formula" > formula-info.json
 python3 - "$root_url" "$version" <<'PY'
 import json, pathlib, sys, urllib.parse
