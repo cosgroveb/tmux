@@ -9,6 +9,7 @@ class Tmux < Formula
   depends_on "autoconf" => :build
   depends_on "automake" => :build
   depends_on "pkgconf" => :build
+  depends_on "jemalloc"
   depends_on "libevent"
   depends_on "ncurses"
   depends_on "utf8proc"
@@ -16,7 +17,7 @@ class Tmux < Formula
 
   def install
     system "sh", "autogen.sh"
-    system "./configure", "--prefix=#{prefix}", "--enable-utf8proc"
+    system "./configure", "--prefix=#{prefix}", "--enable-utf8proc", "--enable-jemalloc"
     system "make", "install"
     pkgshare.install "COPYING"
     (share/"tmux/personal-build.json").write <<~JSON
