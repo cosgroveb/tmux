@@ -7686,7 +7686,7 @@ The following variables are available, where appropriate:
 .It Li "pane_pb_progress" Ta "" Ta "Pane progress bar progress percentage (can be set by application)"
 .It Li "pane_program_message" Ta "" Ta "Decoded OSC 7501 program status message"
 .It Li "pane_program_name" Ta "" Ta "OSC 7501 application name"
-.It Li "pane_program_state" Ta "" Ta "OSC 7501 state: idle, working, done, blocked or error"
+.It Li "pane_program_state" Ta "" Ta "Program state: idle, working, done, blocked or error"
 .It Li "pane_right" Ta "" Ta "Right of pane"
 .It Li "pane_search_string" Ta "" Ta "Last search string in copy mode"
 .It Li "pane_start_command" Ta "" Ta "Command pane started with"
@@ -7800,23 +7800,43 @@ The following variables are available, where appropriate:
 .El
 .Pp
 .Nm
-retains one OSC 7501 root program status record per pane and answers its
-capability query.
+retains one program status record per pane, shared by OSC 7501 and OSC 9
+progress reports.
+OSC 7501 capability queries receive a reply.
 Reports with an
 .Li id
 are ignored.
-Each accepted report replaces the state, application name and decoded message.
-Omitted fields become empty.
+Each accepted OSC 7501 report replaces the semantic state, application name
+and decoded message.
+Omitted name and message fields become empty.
 Other fields, including kind, title and progress, are ignored.
-The record is cleared by
-.Li state=clear ,
-a new shell prompt (OSC 133 A), a full terminal reset (RIS), or pane respawn.
-This also clears completed and error states.
+OSC 7501 takes ownership of the semantic state until the record is cleared.
+OSC 9 then updates only progress mode and percentage.
+.Pp
+Without OSC 7501 ownership, OSC 9 normal and indeterminate states set program
+state to working, paused sets blocked, error sets error and hidden clears it.
+Program name and message remain empty.
+Blocked projects to paused progress, error to error, and idle or done to hidden.
+Working uses the current progress mode.
+An OSC 7501 working report changes hidden progress to indeterminate.
+Thus blocked with 42 percent remains blocked and emits paused with 42 percent
+to attached terminals supporting progress bars.
+.Pp
+Percentages are retained across semantic changes and omitted OSC 9 percentages.
+OSC 9 indeterminate reports retain the previous percentage even when one is
+supplied.
+A new record starts at zero.
+Retained progress may belong to an earlier operation.
+.Pp
+.Li state=clear
+and pane respawn clear the entire record, including percentage and ownership.
+A new shell prompt (OSC 133 A) or full terminal reset (RIS) clears it only when
+OSC 7501 owns the semantic state.
+OSC 9-only status survives these prompt and terminal resets.
+Invalid reports preserve the record.
 A process exiting in a retained dead pane does not clear its record.
 Switching screens, a soft reset, moving the pane and detaching clients preserve
 status.
-These records are independent of OSC 9;4 progress and are not forwarded to
-attached terminals.
 .Sh STYLES
 .Nm
 offers various options to specify the colour and attributes of aspects of the

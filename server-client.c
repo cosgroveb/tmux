@@ -2738,15 +2738,15 @@ static void
 server_client_set_progress_bar(struct client *c)
 {
 	struct session		*s = c->session;
-	struct progress_bar	*pane_pb;
+	struct progress_bar	 pane_pb;
 
 	if (s->curw == NULL || s->curw->window->active == NULL)
 		return;
-	pane_pb = &s->curw->window->active->base.progress_bar;
-	if (pane_pb->state == c->progress_bar.state &&
-	    pane_pb->progress == c->progress_bar.progress)
+	screen_get_progress_bar(&s->curw->window->active->base, &pane_pb);
+	if (pane_pb.state == c->progress_bar.state &&
+	    pane_pb.progress == c->progress_bar.progress)
 		return;
-	memcpy(&c->progress_bar, pane_pb, sizeof c->progress_bar);
+	memcpy(&c->progress_bar, &pane_pb, sizeof c->progress_bar);
 	tty_set_progress_bar(&c->tty, &c->progress_bar);
 }
 

@@ -95,6 +95,8 @@ screen_init(struct screen *s, u_int sx, u_int sy, u_int hlimit)
 
 	s->write_list = NULL;
 	s->hyperlinks = NULL;
+	s->program_status.name = NULL;
+	s->program_status.message = NULL;
 
 	screen_reinit(s);
 }
@@ -125,7 +127,7 @@ screen_reinit(struct screen *s)
 
 	screen_clear_selection(s);
 	screen_free_titles(s);
-	screen_set_progress_bar(s, PROGRESS_BAR_HIDDEN, 0);
+	screen_reset_program_status(s);
 	screen_reset_hyperlinks(s);
 }
 
@@ -143,6 +145,7 @@ screen_reset_hyperlinks(struct screen *s)
 void
 screen_free(struct screen *s)
 {
+	screen_reset_program_status(s);
 	free(s->sel);
 	free(s->tabs);
 	free(s->path);
@@ -310,18 +313,77 @@ screen_pop_title(struct screen *s)
 	}
 }
 
-/*
- * Set the progress bar state and progress. The progress will not be updated
- * if p is negative.
- */
+/* Clear status and release its metadata. */
+void
+screen_reset_program_status(struct screen *s)
+{
+	struct program_status *ps = &s->program_status;
+
+	free(ps->name);
+	free(ps->message);
+	memset(ps, 0, sizeof *ps);
+}
+
+/* Apply OSC 9 progress without replacing OSC 7501 semantics. */
 void
 screen_set_progress_bar(struct screen *s, enum progress_bar_state pbs, int p)
 {
-	s->progress_bar.state = pbs;
+	struct program_status *ps = &s->program_status;
+
+	if (!ps->osc7501) {
+		switch (pbs) {
+		case PROGRESS_BAR_HIDDEN:
+			ps->state = PROGRAM_EMPTY;
+			break;
+		case PROGRESS_BAR_NORMAL:
+		case PROGRESS_BAR_INDETERMINATE:
+			ps->state = PROGRAM_WORKING;
+			break;
+		case PROGRESS_BAR_ERROR:
+			ps->state = PROGRAM_ERROR;
+			break;
+		case PROGRESS_BAR_PAUSED:
+			ps->state = PROGRAM_BLOCKED;
+			break;
+		}
+	}
+	if (pbs == PROGRESS_BAR_HIDDEN)
+		ps->mode = PROGRAM_PROGRESS_HIDDEN;
+	else if (pbs == PROGRESS_BAR_INDETERMINATE)
+		ps->mode = PROGRAM_PROGRESS_INDETERMINATE;
+	else
+		ps->mode = PROGRAM_PROGRESS_DETERMINATE;
 	if (p >= 0 && pbs != PROGRESS_BAR_INDETERMINATE)
-		s->progress_bar.progress = p;
+		ps->progress = p;
 }
 
+/* Project semantic state before progress mode. */
+void
+screen_get_progress_bar(struct screen *s, struct progress_bar *pb)
+{
+	struct program_status *ps = &s->program_status;
+
+	pb->progress = ps->progress;
+	pb->state = PROGRESS_BAR_HIDDEN;
+	switch (ps->state) {
+	case PROGRAM_EMPTY:
+	case PROGRAM_IDLE:
+	case PROGRAM_DONE:
+		break;
+	case PROGRAM_BLOCKED:
+		pb->state = PROGRESS_BAR_PAUSED;
+		break;
+	case PROGRAM_ERROR:
+		pb->state = PROGRESS_BAR_ERROR;
+		break;
+	case PROGRAM_WORKING:
+		if (ps->mode == PROGRAM_PROGRESS_DETERMINATE)
+			pb->state = PROGRESS_BAR_NORMAL;
+		else if (ps->mode == PROGRAM_PROGRESS_INDETERMINATE)
+			pb->state = PROGRESS_BAR_INDETERMINATE;
+		break;
+	}
+}
 
 /* Resize screen with options. */
 void

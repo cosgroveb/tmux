@@ -2679,7 +2679,7 @@ format_cb_pane_pb_progress(struct format_tree *ft)
 	char	*value = NULL;
 
 	if (ft->wp != NULL)
-		xasprintf(&value, "%d", ft->wp->base.progress_bar.progress);
+		xasprintf(&value, "%d", ft->wp->base.program_status.progress);
 	return (value);
 }
 
@@ -2687,8 +2687,11 @@ format_cb_pane_pb_progress(struct format_tree *ft)
 static void *
 format_cb_pane_pb_state(struct format_tree *ft)
 {
+	struct progress_bar pb;
+
 	if (ft->wp != NULL) {
-		switch (ft->wp->base.progress_bar.state) {
+		screen_get_progress_bar(&ft->wp->base, &pb);
+		switch (pb.state) {
 		case PROGRESS_BAR_HIDDEN:
 			return xstrdup("hidden");
 		case PROGRESS_BAR_NORMAL:
@@ -2708,27 +2711,32 @@ format_cb_pane_pb_state(struct format_tree *ft)
 static void *
 format_cb_pane_program_message(struct format_tree *ft)
 {
-	if (ft->wp == NULL || ft->wp->program_message == NULL)
+	if (ft->wp == NULL || ft->wp->base.program_status.message == NULL)
 		return (NULL);
-	return (xstrdup(ft->wp->program_message));
+	return (xstrdup(ft->wp->base.program_status.message));
 }
 
 /* Callback for pane_program_name. */
 static void *
 format_cb_pane_program_name(struct format_tree *ft)
 {
-	if (ft->wp == NULL || ft->wp->program_name == NULL)
+	if (ft->wp == NULL || ft->wp->base.program_status.name == NULL)
 		return (NULL);
-	return (xstrdup(ft->wp->program_name));
+	return (xstrdup(ft->wp->base.program_status.name));
 }
 
 /* Callback for pane_program_state. */
 static void *
 format_cb_pane_program_state(struct format_tree *ft)
 {
-	if (ft->wp == NULL || ft->wp->program_state == NULL)
+	static const char *states[] = {
+		"", "idle", "working", "done", "blocked", "error"
+	};
+
+	if (ft->wp == NULL ||
+	    ft->wp->base.program_status.state == PROGRAM_EMPTY)
 		return (NULL);
-	return (xstrdup(ft->wp->program_state));
+	return (xstrdup(states[ft->wp->base.program_status.state]));
 }
 
 /* Callback for pane_right. */

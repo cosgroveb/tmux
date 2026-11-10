@@ -1423,8 +1423,8 @@ input_esc_dispatch(struct input_ctx *ictx)
 
 	switch (entry->type) {
 	case INPUT_ESC_RIS:
-		if (ictx->wp != NULL && ictx->wp->program_state != NULL) {
-			window_pane_clear_program_status(ictx->wp);
+		if (ictx->wp != NULL && ictx->wp->base.program_status.osc7501) {
+			screen_reset_program_status(&ictx->wp->base);
 			server_status_window(ictx->wp->window);
 			server_redraw_window_borders(ictx->wp->window);
 		}
@@ -2851,12 +2851,12 @@ input_program_status(struct window_pane *wp, const u_char *buf, size_t len)
 	static const char *states[] = {
 		"idle", "working", "done", "blocked", "error", "clear"
 	};
-	const u_char	*end = buf + len, *next, *eq, *key, *keyend;
-	const u_char	*value, *valueend;
-	char		*values[3] = { NULL, NULL, NULL }, *copy;
-	const char	*old[3];
-	size_t		 keylen, valuelen, i;
-	u_int		 field;
+	const u_char		*end = buf + len, *next, *eq, *key, *keyend;
+	const u_char		*value, *valueend;
+	char			*values[3] = { NULL, NULL, NULL }, *copy;
+	struct program_status	*ps = &wp->base.program_status;
+	size_t			 keylen, valuelen, i;
+	u_int			 field;
 
 	while (buf < end) {
 		next = memchr(buf, ':', end - buf);
@@ -2925,29 +2925,22 @@ input_program_status(struct window_pane *wp, const u_char *buf, size_t len)
 		free(values[1]);
 		values[1] = NULL;
 	}
-	if (strcmp(values[0], "clear") == 0) {
-		for (i = 0; i < nitems(values); i++) {
-			free(values[i]);
-			values[i] = NULL;
-		}
+	if (strcmp(values[0], "clear") == 0)
+		screen_reset_program_status(&wp->base);
+	else {
+		ps->state = i + PROGRAM_IDLE;
+		if (ps->state == PROGRAM_WORKING &&
+		    ps->mode == PROGRAM_PROGRESS_HIDDEN)
+			ps->mode = PROGRAM_PROGRESS_INDETERMINATE;
+		ps->osc7501 = 1;
+		free(ps->name);
+		free(ps->message);
+		ps->name = values[1];
+		ps->message = values[2];
+		values[1] = values[2] = NULL;
 	}
-	old[0] = wp->program_state;
-	old[1] = wp->program_name;
-	old[2] = wp->program_message;
-	for (i = 0; i < nitems(values); i++) {
-		if ((old[i] == NULL) != (values[i] == NULL) ||
-		    (old[i] != NULL && strcmp(old[i], values[i]) != 0))
-			break;
-	}
-	if (i == nitems(values))
-		goto out;
-	window_pane_clear_program_status(wp);
-	wp->program_state = values[0];
-	wp->program_name = values[1];
-	wp->program_message = values[2];
 	server_status_window(wp->window);
 	server_redraw_window_borders(wp->window);
-	return;
 
 out:
 	for (i = 0; i < nitems(values); i++)
@@ -3589,8 +3582,8 @@ input_osc_133(struct input_ctx *ictx, const char *p)
 			gl->flags |= GRID_LINE_START_PROMPT;
 		}
 		if (wp != NULL) {
-			if (*p == 'A' && wp->program_state != NULL) {
-				window_pane_clear_program_status(wp);
+			if (*p == 'A' && wp->base.program_status.osc7501) {
+				screen_reset_program_status(&wp->base);
 				server_status_window(wp->window);
 				server_redraw_window_borders(wp->window);
 			}

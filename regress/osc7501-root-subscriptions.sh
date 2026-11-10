@@ -10,7 +10,7 @@ TMPDIR=$(test_tmpdir)
 IN="$TMPDIR/in"
 OUT="$TMPDIR/out"
 PID=
-FORMAT='#{pane_program_state}|#{pane_program_name}|#{pane_program_message}'
+FORMAT='#{pane_program_state}|#{pane_program_name}|#{pane_program_message}|#{pane_pb_state}|#{pane_pb_progress}'
 
 cleanup()
 {
@@ -64,21 +64,45 @@ fields=$($TMUX display-message -p -t status '#{session_id} #{window_id} #{window
 prefix="%subscription-changed status $fields : "
 mkfifo "$IN" || exit 1
 attach
-changed '||'
-emit 'state=working:app=clnkr:msg=aGVsbG8=' 'working|clnkr|hello'
-changed 'working|clnkr|hello'
-emit 'state=clear' '||'
+changed '|||hidden|0'
+emit 'state=working:app=clnkr:msg=aGVsbG8=' 'working|clnkr|hello|indeterminate|0'
+changed 'working|clnkr|hello|indeterminate|0'
+emit 'state=clear' '|||hidden|0'
 # Discard previous notifications so the initial empty snapshot cannot pass.
 : >"$OUT"
-emit 'state=done:app=clnkr' 'done|clnkr|'
-changed 'done|clnkr|'
-emit 'state=clear' '||'
-changed '||'
-emit 'state=blocked:app=clnkr' 'blocked|clnkr|'
-changed 'blocked|clnkr|'
+emit 'state=done:app=clnkr' 'done|clnkr||hidden|0'
+changed 'done|clnkr||hidden|0'
+emit 'state=clear' '|||hidden|0'
+changed '|||hidden|0'
+emit 'state=blocked:app=clnkr' 'blocked|clnkr||paused|0'
+changed 'blocked|clnkr||paused|0'
 detach
-wait_for_output 'blocked|clnkr|' $TMUX display-message -p -t "$pane" "$FORMAT" || exit 1
+wait_for_output 'blocked|clnkr||paused|0' $TMUX display-message -p -t "$pane" "$FORMAT" || exit 1
 attach
-changed 'blocked|clnkr|'
+changed 'blocked|clnkr||paused|0'
+detach
+attach
+$TMUX send-keys -t "$pane" -l "printf '\033]9;4;1;42\007'" || exit 1
+$TMUX send-keys -t "$pane" Enter || exit 1
+changed 'blocked|clnkr||paused|42'
+emit 'state=error:app=clnkr' 'error|clnkr||error|42'
+changed 'error|clnkr||error|42'
+emit 'state=error:app=other:msg=b2s=' 'error|other|ok|error|42'
+changed 'error|other|ok|error|42'
+: >"$OUT"
+emit 'state=clear:id=child' 'error|other|ok|error|42'
+sleep 2
+if grep -q '^%subscription-changed' "$OUT"; then
+	echo 'FAIL: rejected input changed subscription'
+	exit 1
+fi
+emit 'state=clear' '|||hidden|0'
+changed '|||hidden|0'
+emit 'state=blocked:app=tool' 'blocked|tool||paused|0'
+changed 'blocked|tool||paused|0'
+: >"$OUT"
+$TMUX send-keys -t "$pane" -l "printf '\033]133;A\007'" || exit 1
+$TMUX send-keys -t "$pane" Enter || exit 1
+changed '|||hidden|0'
 detach
 echo 'PASS: subscriptions'

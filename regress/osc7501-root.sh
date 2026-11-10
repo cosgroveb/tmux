@@ -163,14 +163,14 @@ preservation()
 	done
 }
 
-independence()
+shared()
 {
 	start_pane separate 80 5 '\033]7501;state=blocked:app=clnkr\007\033]9;4;1;42\007'
 	check_status separate: 'blocked|clnkr|'
-	wait_for_output 'normal|42' $TMUX display-message -p -t separate: '#{pane_pb_state}|#{pane_pb_progress}' || exit 1
+	wait_for_output 'paused|42' $TMUX display-message -p -t separate: '#{pane_pb_state}|#{pane_pb_progress}' || exit 1
 	start_pane separate 80 5 '\033]9;4;1;42\007\033]7501;state=done\007'
 	check_status separate: 'done||'
-	wait_for_output 'normal|42' $TMUX display-message -p -t separate: '#{pane_pb_state}|#{pane_pb_progress}' || exit 1
+	wait_for_output 'hidden|42' $TMUX display-message -p -t separate: '#{pane_pb_state}|#{pane_pb_progress}' || exit 1
 	other=$($TMUX split-window -d -P -F '#{pane_id}' -t separate: "printf '\033]7501;state=error\007'; $INPUT_HOLD") || exit 1
 	wait_for_output 'error||' $TMUX display-message -p -t "$other" "$FORMAT" || exit 1
 	check_status separate:.0 'done||'
@@ -178,8 +178,8 @@ independence()
 
 
 case ${1-all} in
-all) groups='query framing selection replacement validation formats lifecycle preservation independence' ;;
-query|framing|selection|replacement|validation|formats|lifecycle|preservation|independence) groups=$1 ;;
+all) groups='query framing selection replacement validation formats lifecycle preservation shared' ;;
+query|framing|selection|replacement|validation|formats|lifecycle|preservation|shared) groups=$1 ;;
 *) echo "unknown group: $1" >&2; exit 1 ;;
 esac
 for group in $groups; do

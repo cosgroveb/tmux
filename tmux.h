@@ -1112,6 +1112,30 @@ struct progress_bar {
 	int			progress;
 };
 
+enum program_state {
+	PROGRAM_EMPTY,
+	PROGRAM_IDLE,
+	PROGRAM_WORKING,
+	PROGRAM_DONE,
+	PROGRAM_BLOCKED,
+	PROGRAM_ERROR
+};
+
+enum program_progress {
+	PROGRAM_PROGRESS_HIDDEN,
+	PROGRAM_PROGRESS_DETERMINATE,
+	PROGRAM_PROGRESS_INDETERMINATE
+};
+
+struct program_status {
+	enum program_state	 state;
+	enum program_progress	 mode;
+	int			 progress;
+	int			 osc7501;
+	char			*name;
+	char			*message;
+};
+
 /* Virtual screen. */
 struct screen_sel;
 struct screen_titles;
@@ -1149,7 +1173,7 @@ struct screen {
 	struct screen_write_cline	*write_list;
 
 	struct hyperlinks		*hyperlinks;
-	struct progress_bar		 progress_bar;
+	struct program_status		 program_status;
 };
 
 /* Screen write context. */
@@ -1431,10 +1455,6 @@ struct window_pane {
 	struct event	 sync_timer;
 
 	struct input_ctx *ictx;
-
-	char		*program_state;
-	char		*program_name;
-	char		*program_message;
 
 	struct grid_cell cached_gc;
 	struct grid_cell cached_active_gc;
@@ -3778,6 +3798,8 @@ int	 screen_set_path(struct screen *, const char *, int);
 void	 screen_push_title(struct screen *);
 void	 screen_pop_title(struct screen *);
 void	 screen_set_progress_bar(struct screen *, enum progress_bar_state, int);
+void	 screen_reset_program_status(struct screen *);
+void	 screen_get_progress_bar(struct screen *, struct progress_bar *);
 void	 screen_resize(struct screen *, u_int, u_int, int);
 void	 screen_resize_cursor(struct screen *, u_int, u_int, int, int, int);
 void	 screen_set_selection(struct screen *, u_int, u_int, u_int, u_int,
@@ -3882,7 +3904,6 @@ void		 window_pane_set_prompt(struct window_pane *, struct client *,
 		     status_prompt_input_cb, prompt_free_cb, void *, int,
 		     enum prompt_type);
 void		 window_pane_clear_prompt(struct window_pane *);
-void		 window_pane_clear_program_status(struct window_pane *);
 int		 window_pane_has_prompt(struct window_pane *);
 void		 window_pane_update_prompt(struct window_pane *, const char *,
 		     const char *);
