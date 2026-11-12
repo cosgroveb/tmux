@@ -42,10 +42,12 @@ static void		 window_tree_key(struct window_mode_entry *,
 		"#{?pane_marked,#[fg=thememagenta],}#{?pane_floating_flag,#[underscore],}" \
 		"#{pane_current_command}#[fg=themelightgrey]#{pane_flags}" \
 		"#{?#{&&:#{pane_title},#{!=:#{pane_title},#{host_short}}},: \"#{pane_title}\",}" \
+		"#{?pane_program_state, [#{pane_program_name} #{pane_program_state}],}" \
 	",window_format," \
 		"#{?window_marked_flag,#[fg=thememagenta],}" \
 		"#{window_name}#[fg=themelightgrey]#{window_flags}" \
 		"#{?#{&&:#{==:#{window_panes},1},#{&&:#{pane_title},#{!=:#{pane_title},#{host_short}}}},: \"#{pane_title}\",}" \
+		"#{?pane_program_state, [#{pane_program_name} #{pane_program_state}],}" \
 	"," \
 		"#[fg=themelightgrey]#{session_windows} windows" \
 		"#{?session_grouped, " \

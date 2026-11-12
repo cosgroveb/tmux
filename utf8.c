@@ -839,7 +839,7 @@ utf8_isvalid(const char *s)
 				continue;
 			return (0);
 		}
-		if (*s < 0x20 || *s > 0x7e)
+		if (*s != '\t' && *s != '\n' && (*s < 0x20 || *s > 0x7e))
 			return (0);
 		s++;
 	}
