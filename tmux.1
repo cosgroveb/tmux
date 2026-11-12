@@ -7800,19 +7800,30 @@ The following variables are available, where appropriate:
 .El
 .Pp
 .Nm
-retains one OSC 7501 root program status record per pane and answers its
-capability query.
-Reports with an
-.Li id
-are ignored.
-Each accepted report replaces the state, application name and decoded message.
+retains one root and at most one named OSC 7501 program status record per pane
+and answers its capability query.
+Each accepted report replaces its record's state, application name and decoded
+message and selects it, including repeated reports.
 Omitted fields become empty.
+A named report replaces the previous named record, without inheriting fields
+from the root.
+An ID contains up to eight slash-separated segments of one to 32 ASCII letters,
+digits or
+.Ql _ ,
+.Ql \&. ,
+.Ql +
+or
+.Ql - ,
+and is at most 128 bytes long.
+Invalid IDs reject the report.
+A clear without an ID removes both records; a clear with an ID removes the
+named record only if the ID matches or is a slash-delimited ancestor.
+If the selected named record is removed, the root is selected if present.
 Other fields, including kind, title and progress, are ignored.
-The record is cleared by
-.Li state=clear ,
+Both records are cleared by
 a new shell prompt (OSC 133 A), a full terminal reset (RIS), or pane respawn.
 This also clears completed and error states.
-A process exiting in a retained dead pane does not clear its record.
+A process exiting in a retained dead pane does not clear its records.
 Switching screens, a soft reset, moving the pane and detaching clients preserve
 status.
 These records are independent of OSC 9;4 progress and are not forwarded to

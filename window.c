@@ -1987,16 +1987,24 @@ window_pane_set_prompt(struct window_pane *wp, struct client *c,
 	window_fire_pane_prompt("pane-prompt-opened", wp, type);
 }
 
-/* Clear the retained root program status. */
+/* Free a retained program status. */
+void
+program_status_free(struct program_status *ps)
+{
+	free(ps->id);
+	free(ps->state);
+	free(ps->name);
+	free(ps->message);
+	memset(ps, 0, sizeof *ps);
+}
+
+/* Clear the retained program statuses. */
 void
 window_pane_clear_program_status(struct window_pane *wp)
 {
-	free(wp->program_state);
-	free(wp->program_name);
-	free(wp->program_message);
-	wp->program_state = NULL;
-	wp->program_name = NULL;
-	wp->program_message = NULL;
+	program_status_free(&wp->program_root);
+	program_status_free(&wp->program_named);
+	wp->program_status = NULL;
 }
 
 /* Close a pane prompt. */

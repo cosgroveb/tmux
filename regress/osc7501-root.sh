@@ -4,8 +4,6 @@
 LC_ALL=C.UTF-8
 export LC_ALL
 FORMAT='#{pane_program_state}|#{pane_program_name}|#{pane_program_message}'
-REPLY=$(mktemp)
-trap 'rm -f "$TMP" "$EXP" "$REPLY"; stop_server $TMUX || exit 1' 0 1 15
 
 check_status()
 {
@@ -30,16 +28,14 @@ reject()
 
 query()
 {
-	start_cmd query 80 5 "stty raw -echo min 0 time 10; printf '\033]7501;?\007\033]7501;?\033\\\\'; printf '\033[5n'; dd bs=1 count=24 2>/dev/null >'$REPLY'; printf '\033]2;query-done\007'; $INPUT_HOLD"
+	start_cmd query 80 5 "stty raw -echo min 0 time 10; printf '\033]7501;?\007\033]7501;?\033\\\\'; printf '\033[5n'; dd bs=1 count=24 2>/dev/null >'$TMP'; printf '\033]2;query-done\007'; $INPUT_HOLD"
 	wait_for_output query-done $TMUX display-message -p -t query: '#{pane_title}' || exit 1
 	printf '\033]7501;?\033\\\033]7501;?\033\\\033[0n' >"$EXP"
-	cp "$REPLY" "$TMP"
 	cmp -s "$TMP" "$EXP" || fail 'query replies'
 	check_status query: '||'
-	start_cmd query-abort 80 5 "stty raw -echo min 0 time 10; printf '\033]7501;state=done\007\033]7501;?\033x\033]7501;?:id=secret\007\033[5n'; dd bs=1 count=24 2>/dev/null >'$REPLY'; printf '\033]2;query-done\007'; $INPUT_HOLD"
+	start_cmd query-abort 80 5 "stty raw -echo min 0 time 10; printf '\033]7501;state=done\007\033]7501;?\033x\033]7501;?:id=secret\007\033[5n'; dd bs=1 count=24 2>/dev/null >'$TMP'; printf '\033]2;query-done\007'; $INPUT_HOLD"
 	wait_for_output query-done $TMUX display-message -p -t query-abort: '#{pane_title}' || exit 1
 	printf '\033]7501;?\033\\\033[0n' >"$EXP"
-	cp "$REPLY" "$TMP"
 	cmp -s "$TMP" "$EXP" || fail 'parsed queries'
 	check_status query-abort: 'done||'
 }
@@ -75,10 +71,51 @@ framing()
 
 selection()
 {
-	for id in 'id=child' 'id=' 'id=/invalid' ' id = child ' 'id' 'id=bad\000id'; do
-		reject "state=done:$id"
-		reject "state=clear:$id"
+	root='\033]7501;state=working:app=root:msg=cm9vdA==\007'
+	named='\033]7501;state=done:id=a/b:app=child\007'
+	start_pane select 80 5 "$root$named"
+	check_status select: 'done|child|'
+	start_pane select 80 5 "$named\033]7501;state=clear:id=a\007"
+	check_status select: '||'
+	start_pane select 80 5 "$root$named$root"
+	check_status select: 'working|root|root'
+	start_pane select 80 5 "$root$named$root$named"
+	check_status select: 'done|child|'
+	start_pane select 80 5 "$root$named\033]7501;state=clear:id=a\007"
+	check_status select: 'working|root|root'
+	start_pane select 80 5 "$root$named\033]7501;state=clear:id=ab\007"
+	check_status select: 'done|child|'
+	start_pane select 80 5 "$root$named$root\033]7501;state=clear:id=a/b\007"
+	check_status select: 'working|root|root'
+	start_pane select 80 5 "$root$named\033]7501;state=error:id=c\007\033]7501;state=clear:id=c\007"
+	check_status select: 'working|root|root'
+	start_pane select 80 5 "$root$named\033]7501;state=clear\007"
+	check_status select: '||'
+	report 'state=done:id=child' 'done||'
+	report 'state=done:id=first:id=last:app=x' 'done|x|'
+	start_pane select 80 5 "$root\033]7501;state=done:id=first:id=last:app=x\007\033]7501;state=clear:id=first\007"
+	check_status select: 'done|x|'
+	start_pane select 80 5 "$root\033]7501;state=working:id=a:app=root:msg=cm9vdA==\007\033]7501;state=clear:id=a\007"
+	check_status select: 'working|root|root'
+	start_pane select 80 5 "$root\033]7501;state=working:id=a:app=root:msg=cm9vdA==\007$root\033]7501;state=clear:id=a\007"
+	check_status select: 'working|root|root'
+	segment=$(printf '%032d' 0)
+	report "state=done:id=$segment/$segment/$segment/$(printf '%029d' 0)" 'done||'
+	report 'state=done:id=a/b/c/d/e/f/g/h' 'done||'
+	report 'state=done:id= A_.+-9/child ' 'done||'
+	report 'state=done:id=chi\000ld' 'done||'
+	for id in 'id=' 'id' 'id=/a' 'id=a/' 'id=a//b' 'id=a b' 'id=é' \
+	    "id=${segment}x" 'id=a/b/c/d/e/f/g/h/i' \
+	    "id=$segment/$segment/$segment/$segment" 'id=:id=valid' 'id=valid:id='; do
+		start_pane invalid 80 5 "$root$named\033]7501;state=error:$id\007"
+		check_status invalid: 'done|child|'
+		start_pane invalid 80 5 "$root$named\033]7501;state=error:$id\007\033]7501;state=clear:id=a\007"
+		check_status invalid: 'working|root|root'
+		start_pane invalid 80 5 "$root$named\033]7501;state=clear:$id\007"
+		check_status invalid: 'done|child|'
 	done
+	start_pane invalid 80 5 "$root$named\033]7501;state=error:id=c:msg=_\007\033]7501;state=clear:id=a\007"
+	check_status invalid: 'working|root|root'
 }
 
 replacement()
@@ -87,6 +124,8 @@ replacement()
 		report "state=$state:app=clnkr:msg=aGVsbG8=" "$state|clnkr|hello"
 	done
 	start_pane replace 80 5 '\033]7501;state=working:app=clnkr:msg=aGVsbG8=\007\033]7501;state=done\007'
+	check_status replace: 'done||'
+	start_pane replace 80 5 '\033]7501;state=working:id=a:app=clnkr:msg=aGVsbG8=\007\033]7501;state=done:id=b\007'
 	check_status replace: 'done||'
 	report 'state=working:state=done:app=first:app=last:msg=eA==:msg=eQ==' 'done|last|y'
 	for body in 'app=clnkr' 'state=future' 'state=done:state=future'; do reject "$body"; done
@@ -130,10 +169,12 @@ lifecycle()
 {
 	for state in idle working done blocked error; do
 		for clear in '\033]133;A\007' '\033c'; do
-			start_pane clear 80 5 "\033]7501;state=$state:app=clnkr:msg=aGVsbG8=\007$clear$clear"
+			start_pane clear 80 5 "\033]7501;state=$state:app=clnkr:msg=aGVsbG8=\007\033]7501;state=done:id=child\007$clear$clear\033]7501;state=clear:id=child\007"
+			check_status clear: '||'
+			start_pane clear 80 5 "\033]7501;state=done:id=child\007\033]7501;state=$state\007$clear\033]7501;state=clear:id=child\007"
 			check_status clear: '||'
 		done
-		start_pane respawn 80 5 "\033]7501;state=$state:app=clnkr:msg=aGVsbG8=\007"
+		start_pane respawn 80 5 "\033]7501;state=$state:app=clnkr:msg=aGVsbG8=\007\033]7501;state=done:id=child\007"
 		$TMUX respawn-pane -k -t respawn: "printf '\033]2;respawned\007'; $INPUT_HOLD" || exit 1
 		wait_for_output respawned $TMUX display-message -p -t respawn: '#{pane_title}' || exit 1
 		check_status respawn: '||'
@@ -143,18 +184,21 @@ lifecycle()
 preservation()
 {
 	for sequence in '\033[?1049h\033[?1049l' '\033[!p' '\033]133;N\007'; do
-		start_pane preserve 80 5 "\033]7501;state=working:app=clnkr:msg=aGVsbG8=\007$sequence"
+		start_pane preserve 80 5 "\033]7501;state=working:app=clnkr:msg=aGVsbG8=\007\033]7501;state=done:id=child\007$sequence\033]7501;state=clear:id=child\007"
 		check_status preserve: 'working|clnkr|hello'
 	done
-	start_pane move 80 5 '\033]7501;state=done:app=clnkr\007'
+	start_cmd move 80 5 "printf '\033]7501;state=done:app=clnkr\007\033]7501;state=working:id=child\007\033]2;input-ready\007'; $TMUX wait-for moved; printf '\033]7501;state=clear:id=child\007'; $INPUT_HOLD"
+	wait_for_output input-ready $TMUX display-message -p -t move: '#{pane_title}' || exit 1
 	pane=$($TMUX display-message -p -t move: '#{pane_id}')
 	$TMUX new-session -d -s other "$INPUT_HOLD" || exit 1
 	$TMUX join-pane -d -s "$pane" -t other: || exit 1
-	check_status "$pane" 'done|clnkr|'
+	check_status "$pane" 'working||'
+	$TMUX wait-for -S moved || exit 1
+	wait_for_output 'done|clnkr|' $TMUX display-message -p -t "$pane" "$FORMAT" || exit 1
 	for state in idle working done blocked error; do
 		start_pane dead 80 5 ''
 		$TMUX set-option -w -t dead: remain-on-exit on || exit 1
-		$TMUX respawn-pane -k -t dead: "printf '\033]7501;state=$state:app=clnkr\007'" || exit 1
+		$TMUX respawn-pane -k -t dead: "printf '\033]7501;state=working:id=child\007\033]7501;state=$state:app=clnkr\007'" || exit 1
 		wait_for_output 1 $TMUX display-message -p -t dead: '#{pane_dead}' || exit 1
 		check_status dead: "$state|clnkr|"
 	done
@@ -165,10 +209,13 @@ independence()
 	start_pane separate 80 5 '\033]7501;state=blocked:app=clnkr\007\033]9;4;1;42\007'
 	check_status separate: 'blocked|clnkr|'
 	wait_for_output 'normal|42' $TMUX display-message -p -t separate: '#{pane_pb_state}|#{pane_pb_progress}' || exit 1
-	start_pane separate 80 5 '\033]9;4;1;42\007\033]7501;state=done\007'
+	start_pane separate 80 5 '\033]9;4;1;42\007\033]7501;state=done:id=child\007\033]7501;state=clear\007'
+	check_status separate: '||'
+	wait_for_output 'normal|42' $TMUX display-message -p -t separate: '#{pane_pb_state}|#{pane_pb_progress}' || exit 1
+	start_pane separate 80 5 '\033]9;4;1;42\007\033]7501;state=done:id=child\007'
 	check_status separate: 'done||'
 	wait_for_output 'normal|42' $TMUX display-message -p -t separate: '#{pane_pb_state}|#{pane_pb_progress}' || exit 1
-	other=$($TMUX split-window -d -P -F '#{pane_id}' -t separate: "printf '\033]7501;state=error\007'; $INPUT_HOLD") || exit 1
+	other=$($TMUX split-window -d -P -F '#{pane_id}' -t separate: "printf '\033]7501;state=error:id=child\007'; $INPUT_HOLD") || exit 1
 	wait_for_output 'error||' $TMUX display-message -p -t "$other" "$FORMAT" || exit 1
 	check_status separate:.0 'done||'
 }

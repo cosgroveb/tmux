@@ -2708,27 +2708,30 @@ format_cb_pane_pb_state(struct format_tree *ft)
 static void *
 format_cb_pane_program_message(struct format_tree *ft)
 {
-	if (ft->wp == NULL || ft->wp->program_message == NULL)
+	if (ft->wp == NULL || ft->wp->program_status == NULL ||
+	    ft->wp->program_status->message == NULL)
 		return (NULL);
-	return (xstrdup(ft->wp->program_message));
+	return (xstrdup(ft->wp->program_status->message));
 }
 
 /* Callback for pane_program_name. */
 static void *
 format_cb_pane_program_name(struct format_tree *ft)
 {
-	if (ft->wp == NULL || ft->wp->program_name == NULL)
+	if (ft->wp == NULL || ft->wp->program_status == NULL ||
+	    ft->wp->program_status->name == NULL)
 		return (NULL);
-	return (xstrdup(ft->wp->program_name));
+	return (xstrdup(ft->wp->program_status->name));
 }
 
 /* Callback for pane_program_state. */
 static void *
 format_cb_pane_program_state(struct format_tree *ft)
 {
-	if (ft->wp == NULL || ft->wp->program_state == NULL)
+	if (ft->wp == NULL || ft->wp->program_status == NULL ||
+	    ft->wp->program_status->state == NULL)
 		return (NULL);
-	return (xstrdup(ft->wp->program_state));
+	return (xstrdup(ft->wp->program_status->state));
 }
 
 /* Callback for pane_right. */
