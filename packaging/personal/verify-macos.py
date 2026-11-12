@@ -48,8 +48,9 @@ def main():
     version = info['versions']['stable']
     base = json.loads((args.source / 'packaging/personal/base.json').read_text())['upstream_sha']
     configure = (args.source / 'configure.ac').read_text()
-    upstream_version = re.search(r'^AC_INIT\(\[tmux\], ([^],)]+)\)', configure, re.M)
-    require(upstream_version, 'cannot determine tmux version from configure.ac')
+    match = re.search(r'^AC_INIT\(\[tmux\], ([^],)]+)\)', configure, re.M)
+    require(match, 'cannot determine tmux version from configure.ac')
+    upstream_version = match[1].strip()
     expected = {'source_sha': None, 'upstream_sha': base,
                 'version': version, 'target': args.target}
     # The expected SHA comes independently from checkout/workflow identity, not the poured identity.
@@ -72,7 +73,7 @@ def main():
         require(receipt['source']['tap'] == 'cosgroveb/tap', 'wrong installed tap')
         require(receipt['source']['versions']['stable'] == version, 'wrong installed version')
         binary = prefix / 'bin/tmux'
-        require(output(str(binary), '-V') == 'tmux ' + upstream_version[1].strip(), 'unexpected tmux executable')
+        require(output(str(binary), '-V') == 'tmux ' + upstream_version, 'unexpected tmux executable')
         require(shutil.which('tmux') is not None and
                 Path(shutil.which('tmux')).resolve() == binary.resolve(), 'tmux PATH shadowing')
         run('brew', 'test', args.formula, env=env)
@@ -156,7 +157,7 @@ def main():
     source_hash = hashlib.sha256(args.archive.read_bytes()).hexdigest()
     template = (args.source / 'packaging/personal/tmux.rb.in').read_text()
     for key, value in {'VERSION': predecessor, 'SOURCE_SHA': expected['source_sha'],
-                       'UPSTREAM_SHA': base, 'UPSTREAM_VERSION': upstream_version[1].strip(),
+                       'UPSTREAM_SHA': base, 'UPSTREAM_VERSION': upstream_version,
                        'SOURCE_SHA256': source_hash}.items():
         template = template.replace('@' + key + '@', value)
     try:

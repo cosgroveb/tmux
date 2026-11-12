@@ -27,7 +27,7 @@ else
 fi
 python3 - "$version" "$source_sha" <<'PY'
 import re, sys
-assert re.fullmatch(r'[0-9]+(?:\.[0-9]+){4}', sys.argv[1]), 'invalid version'
+assert re.fullmatch(r'[1-9][0-9]*(?:\.(?:0|[1-9][0-9]*)){4}', sys.argv[1]), 'invalid version'
 assert re.fullmatch(r'[0-9a-f]{40}', sys.argv[2]), 'invalid source SHA'
 PY
 work=$(mktemp -d)
