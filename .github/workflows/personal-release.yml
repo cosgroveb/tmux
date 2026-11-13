@@ -116,7 +116,7 @@ jobs:
             -e VERSION -e TARGET \
             -v "$PWD/source:/inputs:ro" -v "$PWD/artifacts:/packages:ro" "$IMAGE" sh -ec '
               apt-get update
-              apt-get install -y python3 ca-certificates
+              apt-get install -y python3 ca-certificates procps
               mkdir /src
               tar -xzf "/inputs/tmux-$VERSION.tar.gz" -C /src --strip-components=1
               suite=${TARGET#*-}; suite=${suite%-*}; arch=${TARGET##*-}
