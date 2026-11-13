@@ -208,6 +208,7 @@ server_lock_client(struct client *c)
 	if (*cmd == '\0' || strlen(cmd) + 1 > MAX_IMSGSIZE - IMSG_HEADER_SIZE)
 		return;
 
+	program_status_client_lock(c);
 	tty_stop_tty(&c->tty);
 	tty_raw(&c->tty, tty_term_string(c->tty.term, TTYC_SMCUP));
 	tty_raw(&c->tty, tty_term_string(c->tty.term, TTYC_CLEAR));
@@ -519,6 +520,7 @@ server_destroy_session(struct session *s)
 		if (use_s == NULL && (c->flags & CLIENT_NO_DETACH_ON_DESTROY))
 			use_s = cs_new;
 
+		program_status_client_session_destroying(c);
 		c->session = NULL;
 		c->last_session = NULL;
 		server_client_set_session(c, use_s);
