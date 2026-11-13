@@ -198,12 +198,16 @@ class Test:
         os.mkfifo(fifo)
         command = shlex.join([sys.executable, '-B',
             os.path.abspath(__file__), '--pane', str(fifo), str(replies)])
+        # Qualify the target as a session: a bare name is first tried
+        # as a window-name prefix in the current session, and these
+        # panes are automatically named after the spawn shell ("bash"
+        # on Linux), so a bare "b" would match session b's window 0.
         if initial:
             args = ['new-session', '-d', '-s', session]
         elif window:
-            args = ['new-window', '-d', '-t', session]
+            args = ['new-window', '-d', '-t', session + ':']
         else:
-            args = ['split-window', '-d', '-t', session]
+            args = ['split-window', '-d', '-t', session + ':']
         pane = self.cmd(*args, '-P', '-F', '#{pane_id}', command)
         self.until(replies.exists, 'pane worker')
         return (pane, fifo, replies)
@@ -1606,10 +1610,13 @@ def lifecycle_locked_detach(test):
         assert locked.frames() == [b'state=clear:id=tmux'], \
             'locked kill-server clear count'
         # The locked client prints no further restore or exit line on
-        # this path, so the ordering pin is the lock takeover: the clear
-        # must follow it, and it is the only frame in the capture.
+        # this path, so the ordering pin is the lock takeover: the
+        # clear must follow it. Anchor on the last alt-screen enter:
+        # ncurses 6.4+ xterm terminfo appends a title-stack sequence to
+        # smcup, so the takeover redraw is not one contiguous run of
+        # bytes on every platform.
         assert locked.raw.index(CLEAR_NS) > \
-            locked.raw.index(b'\x1b[?1049h\x1b[H\x1b[2J\x1b[3J'), \
+            locked.raw.rindex(b'\x1b[?1049h'), \
             'clear preceded the lock takeover'
         assert quiet.frames() == [], \
             'never-confirmed locked client emitted output'
