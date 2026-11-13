@@ -93,7 +93,7 @@ jobs:
             -e VERSION -e TARGET -e SOURCE_SHA="$GITHUB_SHA" \
             -v "$PWD/source:/inputs:ro" -v "$PWD/artifacts:/out" "$IMAGE" sh -ec '
               apt-get update
-              apt-get install -y autoconf automake bison build-essential pkg-config libevent-dev libncurses-dev libutf8proc-dev dpkg-dev python3 git ca-certificates
+              apt-get install -y autoconf automake bison build-essential pkg-config libevent-dev libncurses-dev libutf8proc-dev dpkg-dev python3 git ca-certificates procps
               mkdir /src
               tar -xzf "/inputs/tmux-$VERSION.tar.gz" -C /src --strip-components=1
               cd /src
