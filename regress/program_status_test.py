@@ -1616,7 +1616,7 @@ def lifecycle_locked_detach(test):
         # smcup, so the takeover redraw is not one contiguous run of
         # bytes on every platform.
         assert locked.raw.index(CLEAR_NS) > \
-            locked.raw.rindex(b'\x1b[?1049h'), \
+            locked.raw.rindex(b'\033[?1049h'), \
             'clear preceded the lock takeover'
         assert quiet.frames() == [], \
             'never-confirmed locked client emitted output'
