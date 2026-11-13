@@ -1,0 +1,222 @@
+name: Personal tmux packages
+
+on:
+  push:
+    branches: [osc7501-direct-personal-20261113]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing staged tag to publish without rebuilding
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    if: github.repository == 'cosgroveb/tmux' && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      tag: ${{ steps.identity.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Release identity
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir artifacts
+          python3 packaging/personal/release.py identity --output artifacts/identity.json
+      - name: Export exact source
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: |
+          git archive --format=tar --prefix="tmux-$VERSION/" "$GITHUB_SHA" > "$RUNNER_TEMP/source.tar"
+          python3 - <<'PY'
+          import gzip, io, os, pathlib, tarfile
+          version = os.environ['VERSION']
+          archive = pathlib.Path(os.environ['RUNNER_TEMP']) / 'source.tar'
+          with tarfile.open(archive, 'a') as tar:
+              content = (os.environ['GITHUB_SHA'] + '\n').encode()
+              entry = tarfile.TarInfo(f'tmux-{version}/.personal-source-sha')
+              entry.size, entry.mode, entry.mtime = len(content), 0o644, 0
+              tar.addfile(entry, io.BytesIO(content))
+          pathlib.Path(f'artifacts/tmux-{version}.tar.gz').write_bytes(gzip.compress(archive.read_bytes(), mtime=0))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: personal-${{ github.run_attempt }}-source
+          path: artifacts/*
+          if-no-files-found: error
+
+  linux:
+    needs: source
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: debian-bookworm-amd64, image: 'debian:bookworm', runner: ubuntu-24.04}
+          - {target: debian-bookworm-arm64, image: 'debian:bookworm', runner: ubuntu-24.04-arm}
+          - {target: debian-trixie-amd64, image: 'debian:trixie', runner: ubuntu-24.04}
+          - {target: debian-trixie-arm64, image: 'debian:trixie', runner: ubuntu-24.04-arm}
+          - {target: ubuntu-noble-amd64, image: 'ubuntu:noble', runner: ubuntu-24.04}
+          - {target: ubuntu-noble-arm64, image: 'ubuntu:noble', runner: ubuntu-24.04-arm}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: personal-${{ github.run_attempt }}-source
+          path: source
+      - name: Build and verify package in matching distribution
+        env:
+          VERSION: ${{ needs.source.outputs.version }}
+          TARGET: ${{ matrix.target }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          mkdir artifacts
+          cid="$RUNNER_TEMP/tmux-build.cid"
+          cleanup() {
+            if test -f "$cid" && docker inspect "$(cat "$cid")" >/dev/null 2>&1; then
+              docker stop "$(cat "$cid")"
+            fi
+          }
+          trap cleanup EXIT
+          docker run --init --rm --cidfile "$cid" \
+            -e VERSION -e TARGET -e SOURCE_SHA="$GITHUB_SHA" \
+            -v "$PWD/source:/inputs:ro" -v "$PWD/artifacts:/out" "$IMAGE" sh -ec '
+              apt-get update
+              apt-get install -y autoconf automake bison build-essential pkg-config libevent-dev libncurses-dev libutf8proc-dev dpkg-dev python3 git ca-certificates
+              mkdir /src
+              tar -xzf "/inputs/tmux-$VERSION.tar.gz" -C /src --strip-components=1
+              cd /src
+              sh packaging/personal/build-linux.sh "$VERSION" "$SOURCE_SHA" "$TARGET" /out
+            '
+      - name: Verify in clean matching runtime container
+        env:
+          VERSION: ${{ needs.source.outputs.version }}
+          TARGET: ${{ matrix.target }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          cid="$RUNNER_TEMP/tmux-runtime.cid"
+          cleanup() {
+            if test -f "$cid" && docker inspect "$(cat "$cid")" >/dev/null 2>&1; then
+              docker stop "$(cat "$cid")"
+            fi
+          }
+          trap cleanup EXIT
+          docker run --init --rm --cidfile "$cid" \
+            -e VERSION -e TARGET \
+            -v "$PWD/source:/inputs:ro" -v "$PWD/artifacts:/packages:ro" "$IMAGE" sh -ec '
+              apt-get update
+              apt-get install -y python3 ca-certificates
+              mkdir /src
+              tar -xzf "/inputs/tmux-$VERSION.tar.gz" -C /src --strip-components=1
+              suite=${TARGET#*-}; suite=${suite%-*}; arch=${TARGET##*-}
+              python3 /src/packaging/personal/verify-install.py --source /src --target "$TARGET" --package "/packages/tmux_$VERSION-1+$suite"_"$arch.deb"
+            '
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: personal-${{ github.run_attempt }}-${{ matrix.target }}
+          path: artifacts/*
+          if-no-files-found: error
+
+  macos:
+    needs: source
+    runs-on: macos-26
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: personal-${{ github.run_attempt }}-source
+          path: source
+      - name: Build and pour real bottle
+        env:
+          VERSION: ${{ needs.source.outputs.version }}
+        run: |
+          mkdir artifacts src
+          tar -xzf "source/tmux-$VERSION.tar.gz" -C src --strip-components=1
+          cd src
+          bash packaging/personal/build-macos.sh "$VERSION" "$GITHUB_SHA" "$GITHUB_WORKSPACE/source/tmux-$VERSION.tar.gz" "$GITHUB_WORKSPACE/artifacts"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: personal-${{ github.run_attempt }}-macos-26-arm64
+          path: artifacts/*
+          if-no-files-found: error
+
+  assemble:
+    needs: [source, linux, macos]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: personal-${{ github.run_attempt }}-*
+          merge-multiple: true
+          path: artifacts
+      - name: Require complete verified matrix
+        run: |
+          python3 packaging/personal/test-release.py
+          python3 packaging/personal/release.py assemble --identity artifacts/identity.json --artifacts artifacts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: personal-${{ github.run_attempt }}-complete
+          path: artifacts/*
+          if-no-files-found: error
+
+  publish:
+    needs: [source, assemble]
+    if: >-
+      always() && github.repository == 'cosgroveb/tmux' &&
+      ((github.event_name == 'push' && needs.assemble.result == 'success') || github.event_name == 'workflow_dispatch')
+    # No arm64 requirement: release.py publish only moves prebuilt arm64
+    # assets and runs brew/dpkg checks, which pass on either architecture.
+    # macos-26 arm64 failed runner allocation once (run 43233035626); the
+    # publication-only retry on macos-26-intel succeeded (run 43237185127).
+    runs-on: macos-26-intel
+    permissions:
+      contents: write
+    concurrency:
+      group: personal-tmux-publication
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: github.event_name == 'push'
+        with:
+          name: personal-${{ github.run_attempt }}-complete
+          path: artifacts
+      - name: Download existing immutable publication
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          case "$TAG" in personal-[0-9]*) ;; *) exit 1 ;; esac
+          mkdir artifacts
+          gh release download "$TAG" --repo cosgroveb/tmux --dir artifacts
+          python3 packaging/personal/release.py validate --artifacts artifacts
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          assert json.loads(Path('artifacts/manifest.json').read_text())['tag'] == os.environ['TAG']
+          PY
+      - name: Stage and promote verified publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          brew install dpkg
+          python3 packaging/personal/release.py publish --artifacts artifacts
