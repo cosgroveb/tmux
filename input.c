@@ -2935,8 +2935,12 @@ input_osc_7501(struct input_ctx *ictx, const char *p)
 {
 	if (strcmp(p, "?") == 0)
 		input_reply(ictx, 1, "\033]7501;?\033\\");
-	else if (ictx->wp != NULL)
-		input_program_status(ictx->wp, p);
+	else {
+		if (ictx->wp != NULL)
+			input_program_status(ictx->wp, p);
+		program_status_forward(ictx->wp, p,
+		    ictx->input_end == INPUT_END_BEL);
+	}
 }
 
 /* APC string started. */

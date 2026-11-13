@@ -486,6 +486,18 @@ const struct options_table_entry options_table[] = {
 	  .text = "Whether to send focus events to applications."
 	},
 
+	{ .name = "forward-program-status",
+	  .type = OPTIONS_TABLE_FLAG,
+	  .scope = OPTIONS_TABLE_SERVER,
+	  .default_num = 0,
+	  .text = "Whether to forward OSC 7501 program status reports "
+		  "from panes to the outer terminal, if it supports them. "
+		  "Each report identity is rewritten into a tmux-owned "
+		  "namespace (tmux/p<pane> for a root report), so the outer "
+		  "terminal can show per-pane status; all other fields "
+		  "pass through unchanged."
+	},
+
 	{ .name = "get-clipboard",
 	  .type = OPTIONS_TABLE_CHOICE,
 	  .scope = OPTIONS_TABLE_SERVER,
