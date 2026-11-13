@@ -1362,8 +1362,14 @@ def lifecycle_kill_server_pending(test):
             str(pid)], stdout=subprocess.PIPE).stdout.decode()
             .strip().startswith('T'), 'frontend client paused')
         # Hold the master read and fill the kernel PTY buffer with the
-        # burst; its tail stays queued in tty->out.
-        test.partial(COLOUR_LINE*400)
+        # burst; its tail stays queued in tty->out. The backlog must
+        # also flush to the drained master well inside the 10 seconds
+        # server_client_check_exit gives a non-exiting client before
+        # abandoning its buffered output (the macOS PTY accepts about a
+        # kilobyte per drain cycle), so the burst stays small: CI run
+        # 43457504650 lost the stale report when a 400-line backlog was
+        # still draining at the 10-second force exit.
+        test.partial(COLOUR_LINE*50)
         # The fresh report is parsed (the title marker proves it) and
         # queued behind the stalled backlog.
         test.report(b'state=stale')
