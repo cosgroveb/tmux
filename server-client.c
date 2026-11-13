@@ -381,6 +381,9 @@ server_client_set_session(struct client *c, struct session *s)
 	c->session = s;
 	c->flags |= CLIENT_FOCUSED;
 
+	program_status_client_switch(c, old);
+	program_status_client_sync(c);
+
 	if (old == NULL && s != NULL && (c->tty.flags & TTY_OPENED)) {
 		c->active_theme = THEME_UNKNOWN;
 		server_client_update_theme_colours(c);
@@ -544,6 +547,7 @@ server_client_suspend(struct client *c)
 	if (s == NULL || (c->flags & CLIENT_UNATTACHEDFLAGS))
 		return;
 
+	program_status_client_suspend(c);
 	tty_stop_tty(&c->tty);
 	c->flags |= CLIENT_SUSPENDED;
 	proc_send(c->peer, MSG_SUSPEND, -1, NULL, 0);
@@ -1986,6 +1990,7 @@ server_client_loop(void)
 	/* Check clients. */
 	TAILQ_FOREACH(c, &clients, entry) {
 		server_client_check_exit(c, 0);
+		program_status_client_sync(c);
 		if (c->session != NULL && c->session->curw != NULL) {
 			server_client_check_modes(c);
 			server_client_check_redraw(c);

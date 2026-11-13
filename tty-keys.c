@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "tmux.h"
@@ -83,6 +84,8 @@ static int	tty_keys_palette(struct tty *, const char *, size_t, size_t *,
 		    int);
 static int	tty_keys_winsz(struct tty *, const char *, size_t, size_t *,
 		    int);
+static int	tty_keys_program_status(struct tty *, const char *, size_t,
+		    size_t *, int);
 static int	tty_keys_next1(struct tty *, const char *, size_t,
 		    struct tty_key_parse *, int);
 
@@ -99,6 +102,7 @@ static const struct {
 	{ KEYC_REPORT_COLOURS, tty_keys_colours1 },
 	{ KEYC_REPORT_PALETTE, tty_keys_palette },
 	{ KEYC_REPORT_WINSZ, tty_keys_winsz },
+	{ KEYC_REPORT_PROGRAM_STATUS, tty_keys_program_status },
 #ifdef ENABLE_IMAGES
 	{ KEYC_REPORT_KITTY_GRAPHICS, tty_keys_kitty_graphics }
 #endif
@@ -2008,4 +2012,90 @@ tty_keys_winsz(struct tty *tty, const char *buf, size_t len, size_t *size,
 
 	log_debug("%s: unrecognized window size sequence: %s", c->name, tmp);
 	return (-1);
+}
+
+/*
+ * Handle OSC 7501 program status reply. A matched, terminated reply is
+ * always consumed (never passed to a pane), even after its probe timed
+ * out or no probe is pending; only applying it is gated inside
+ * program-status.c. Returns 0 for success, -1 for failure, 1 for
+ * partial.
+ */
+static int
+tty_keys_program_status(struct tty *tty, const char *buf, size_t len,
+    size_t *size, int apply)
+{
+	const char	 prefix[] = "\033]7501;";
+	size_t		 i, offset = sizeof prefix - 1, end = 0, plen;
+	int		 continuing, terminated = 0, valid = 1;
+	char		*body;
+
+	*size = 0;
+	plen = len < offset ? len : offset;
+
+	/*
+	 * An oversized or abandoned reply is discarded until a fresh
+	 * introducer or the discard window expires.
+	 */
+	continuing = tty->program_status_discard_until > time(NULL);
+	if (continuing && memcmp(buf, prefix, plen) == 0) {
+		if (len < offset)
+			return (1);
+		continuing = 0;
+	}
+	if (continuing)
+		offset = 0;
+	else {
+		if (memcmp(buf, prefix, plen) != 0)
+			return (-1);
+		if (len < offset)
+			return (1);
+	}
+
+	/* Find the terminator, up to the sequence bound. */
+	for (i = offset; i < len && i < PROGRAM_STATUS_FRAME_LIMIT; i++) {
+		if (buf[i] == '\007') {
+			end = i;
+			*size = i + 1;
+			terminated = 1;
+			break;
+		}
+		if (buf[i] == '\033') {
+			if (i + 1 == len)
+				return (1);
+			end = i;
+			*size = i + (buf[i + 1] == '\\' ? 2 : 0);
+			terminated = 1;
+			valid = buf[i + 1] == '\\';
+			break;
+		}
+		if ((u_char)buf[i] < 0x20 || (u_char)buf[i] > 0x7e)
+			valid = 0;
+	}
+	if (!terminated) {
+		if (len < PROGRAM_STATUS_FRAME_LIMIT)
+			return (1);
+		*size = PROGRAM_STATUS_FRAME_LIMIT;
+		if (apply && !continuing)
+			tty->program_status_discard_until =
+			    time(NULL) + TTY_QUERY_TIMEOUT;
+		return (0);
+	}
+	if (*size == 0)
+		return (-1);
+	if (!apply)
+		return (0);
+
+	/*
+	 * Consume the matched reply; apply it only if it is complete and
+	 * well-formed.
+	 */
+	tty->program_status_discard_until = 0;
+	if (continuing || !valid ||
+	    *size > PROGRAM_STATUS_FRAME_LIMIT)
+		return (0);
+	body = xmemdup(buf + offset, end - offset);
+	program_status_client_reply(tty, body);
+	free(body);
+	return (0);
 }

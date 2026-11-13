@@ -5130,6 +5130,16 @@ option.
 When enabled and
 .Ic mouse
 is on, moving the mouse into a pane selects it.
+.It Xo Ic forward\-program\-status
+.Op Cm on | off
+.Xc
+When enabled, OSC 7501 program status reports from panes are forwarded to
+the outer terminal of each attached client.
+Each client is probed for support and reports are only forwarded once
+the terminal confirms it.
+Report identities are rewritten into a tmux-owned namespace, tmux/p<pane>
+for a root report and tmux/p<pane>/<id> for a child report, and all other
+fields pass through unchanged.
 .It Xo Ic get\-clipboard
 .Op Cm both | request | buffer | off
 .Xc
