@@ -5142,10 +5142,10 @@ Each client is probed for support and reports are only forwarded once
 the terminal confirms it.
 Reports are taken from every pane in the session the client is attached
 to, including panes in background windows, and not from other sessions.
-Only an idless root report is forwarded: its identity is rewritten into
-the tmux\-owned namespace as tmux/p<pane>, and all other fields pass
-through unchanged.
-A report carrying an id, in any form, forwards nothing.
+Report identities are rewritten into a tmux\-owned namespace, tmux/p<pane>
+for a root report and tmux/p<pane>/<id> for a child report, and all other
+fields pass through unchanged.
+A report carrying an invalid id forwards nothing.
 Reports are forwarded as they are received and are never replayed.
 .Pp
 If output to an outer terminal is discarded, the forwarded program status

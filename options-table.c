@@ -493,13 +493,14 @@ const struct options_table_entry options_table[] = {
 	  .text = "Whether to forward OSC 7501 program status reports "
 		  "from panes to the outer terminal, if it supports them. "
 		  "Reports come from every pane in the client's attached "
-		  "session, background windows included. Only an idless "
-		  "report is forwarded, rewritten into the tmux-owned "
-		  "identity tmux/p<pane>, so the outer terminal can show "
-		  "per-pane status; reports carrying an id forward nothing "
-		  "and other fields pass through unchanged. Discarding "
-		  "outer-terminal output clears the forwarded status and "
-		  "nothing is replayed."
+		  "session, background windows included. Each report "
+		  "identity is rewritten into the tmux-owned namespace "
+		  "(tmux/p<pane> for a root report and tmux/p<pane>/<id> "
+		  "for a child report), so the outer terminal can show "
+		  "per-pane status; a report carrying an invalid id "
+		  "forwards nothing and other fields pass through "
+		  "unchanged. Discarding outer-terminal output clears the "
+		  "forwarded status and nothing is replayed."
 	},
 
 	{ .name = "get-clipboard",

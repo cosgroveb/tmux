@@ -29,7 +29,6 @@ RECORD = re.compile(rb'\033\]7501;([^\007\033]*)(?:\007|\033\\)')
 PROBE = OSC + b'?' + ST
 CLEAR_NS = OSC + b'state=clear:id=tmux' + ST
 ID_PREFIX = b'id=tmux/p'
-ROOT = ID_PREFIX + b'0'
 
 
 def pane_worker(fifo, replies):
@@ -502,24 +501,25 @@ def probe_notunnel(test):
 
 
 def forward_basic(test):
-    # Idless root reports carry one root identity; non-ID fields pass
-    # verbatim, an omitted app stays omitted, and a BEL frame keeps its
-    # BEL terminator.
+    # Root and child identity rewriting; non-ID fields verbatim, omitted
+    # app stays omitted, BEL frames keep the BEL terminator.
     terminal = test.enable_forwarding()
     body = (b'state=working:app=build:msg=SGVsbG8=:title=VGVzdA=='
         b':kind=auth:progress=42:unknown=yes')
+    expected = (ID_PREFIX + b'0:' + body)
     test.report(body)
-    terminal.wait_frame(ROOT + b':' + body)
+    terminal.wait_frame(expected)
     terminal.clear_capture()
     test.report(b'state=done', end=BEL)
-    terminal.wait_bytes(OSC + ROOT + b':state=done' + BEL)
+    terminal.wait_bytes(OSC + ID_PREFIX + b'0:state=done' + BEL)
+    test.report(b'state=done:id=build/test')
+    terminal.wait_frame(ID_PREFIX + b'0/build/test:state=done')
+    # A second pane keeps an independent root.
     split = test.new_pane()
-    fragment = split[0][1:].encode()
     test.report(b'state=blocked', split)
-    terminal.wait_frame(ID_PREFIX + fragment + b':state=blocked')
-    terminal.clear_capture()
+    terminal.wait_frame(ID_PREFIX + b'1:state=blocked')
     test.report(b' state = idle : app = spaced ')
-    terminal.wait_frame(ROOT + b': state = idle : app = spaced ')
+    terminal.wait_frame(ID_PREFIX + b'0: state = idle : app = spaced ')
     # The id key is exact and case-sensitive: only a lowercase "id" is
     # the identity, so ID= and idx= are ordinary fields and pass through
     # verbatim like any other.
@@ -527,12 +527,63 @@ def forward_basic(test):
     for body in (b'state=done:ID=a/b', b'state=done:idx=a/b',
         b'state=done:ID=a/b:idx=c/d'):
         test.report(body)
-        terminal.wait_frame(ROOT + b':' + body)
-    # Output bound: a regenerated frame of exactly 4096 bytes passes and
-    # 4097 drops the whole report, for both terminators. Each bound
+        terminal.wait_frame(ID_PREFIX + b'0:' + body)
+    terminal.clear_capture()
+    test.report(b'')
+    terminal.wait_frame(ID_PREFIX + b'0:')
+
+
+def forward_idrules(test):
+    terminal = test.enable_forwarding()
+    # Valid duplicates: last wins after validating all.
+    test.report(b'state=done:id=a/b:id=c/d')
+    terminal.wait_frame(ID_PREFIX + b'0/c/d:state=done')
+    terminal.clear_capture()
+    # Whitespace around the id key and value is trimmed by the local pair
+    # conventions, so a padded child id still resolves to the same
+    # namespace. The BEL frame proves the terminator survives it.
+    test.report(b'state=done: id = a/b')
+    terminal.wait_frame(ID_PREFIX + b'0/a/b:state=done')
+    terminal.clear_capture()
+    test.report(b'state=done:\tid\t=\ta/b', end=BEL)
+    terminal.wait_bytes(OSC + ID_PREFIX + b'0/a/b:state=done' + BEL)
+    terminal.clear_capture()
+    # Bare, empty and invalid values drop the whole report.
+    for body in (b'state=done:id', b'state=done:id=', b'state=done:id=bad!',
+        b'state=done:id=has space', b'state=done:id=/lead',
+        b'state=done:id=trail/', b'state=done:id=a//b', b'id'):
+        test.report(body)
+        assert terminal.frames() == [], ('invalid id forwarded', body)
+    # An invalid id as the whole BEL frame drops the same way.
+    test.report(b'state=done:id=bad!', end=BEL)
+    assert terminal.frames() == [], 'invalid BEL id forwarded'
+    # Pre-translation limits.
+    test.report(b'state=done:id=' + b'a'*33)
+    assert terminal.frames() == [], '33-byte segment accepted'
+    test.report(b'state=done:id=' + b'/'.join([b'a']*9))
+    assert terminal.frames() == [], 'nine segments accepted'
+    test.report(b'state=done:id=' + b'a'*129)
+    assert terminal.frames() == [], '129-byte id accepted'
+    # Post-translation limits: passes before, exceeds after rewriting.
+    long_id = b'/'.join([b'a'*30]*4)
+    test.report(b'state=done:id=' + long_id)
+    assert terminal.frames() == [], 'overbound translated id accepted'
+    test.report(b'state=done:id=' + b'/'.join([b'a']*8))
+    assert terminal.frames() == [], 'ten-segment translated id accepted'
+    # Ordered positive sentinel: a report this fixture marks and the
+    # client forwards proves every prior queued frame crossed the client
+    # in order, so nothing above was merely still in flight.
+    test.report(b'state=done')
+    terminal.wait_frame(ID_PREFIX + b'0:state=done')
+    assert terminal.frames() == [ID_PREFIX + b'0:state=done'], \
+        'rejected report reached the client'
+    terminal.clear_capture()
+    # A regenerated frame of exactly 4096 bytes passes; 4097 drops whole,
+    # for both terminators. Each bound
     # report is followed by a marked root report in the same ordered
-    # stream, which proves the bound body was processed.
-    overhead = len(OSC + ROOT + b':')
+    # stream, so the bound body is proven processed even without a marker
+    # of its own.
+    overhead = len(OSC + ID_PREFIX + b'0:')
     for end in (BEL, ST):
         pad = b'state=done:pad='
         body = pad + b'x'*(4096 - overhead - len(end) - len(pad))
@@ -540,74 +591,43 @@ def forward_basic(test):
         terminal.clear_capture()
         test.report(body, end=end, marker=False)
         test.report(b'state=working')
-        terminal.wait_frame(ROOT + b':state=working')
-        assert ROOT + b':' + body in terminal.frames(), \
+        terminal.wait_frame(ID_PREFIX + b'0:state=working')
+        assert ID_PREFIX + b'0:' + body in terminal.frames(), \
             'exact 4096-byte frame dropped'
         terminal.clear_capture()
         body = body + b'x'
         test.report(body, end=end, marker=False)
         test.report(b'state=error')
-        terminal.wait_frame(ROOT + b':state=error')
-        assert terminal.frames() == [ROOT + b':state=error'], \
+        terminal.wait_frame(ID_PREFIX + b'0:state=error')
+        assert terminal.frames() == [ID_PREFIX + b'0:state=error'], \
             '4097-byte frame accepted'
-    terminal.clear_capture()
-    test.report(b'')
-    terminal.wait_frame(ROOT + b':')
-
-
-def forward_idreject(test):
-    # Reject the key regardless of its value.
-    terminal = test.enable_forwarding()
-    terminal.clear_capture()
-    for body in (b'state=done:id=a/b', b'state=done:id',
-        b'state=done:id=', b'id=a/b:state=done',
-        b'state=done:id=a/b:', b':id=a/b:state=done',
-        b'state=done: id =a/b', b'state=done:\tid\t=\ta/b',
-        b'state=done:id=a/b:id=c/d', b'id'):
-        test.report(body)
-    test.report(b'state=done:id', end=BEL)
-    test.report(b'state=done:id=a/b', end=BEL)
-    terminal.pump(.3)
-    assert terminal.frames() == [], 'id-bearing report forwarded'
-    # The same producer's idless report still flows, so the rejection is
-    # the id rule and not a stalled fixture.
-    test.report(b'state=done')
-    terminal.wait_frame(ROOT + b':state=done')
-    terminal.clear_capture()
-    split = test.new_pane()
-    test.report(b'state=done:id=a/b', split)
-    terminal.pump(.3)
-    assert terminal.frames() == [], 'child report forwarded from another pane'
 
 
 def forward_clear(test):
+    # Clears translate by the same id rule as reports; two panes with
+    # the same child id stay independent.
     terminal = test.enable_forwarding()
     test.report(b'state=clear')
-    terminal.wait_frame(ROOT + b':state=clear')
-    terminal.clear_capture()
+    terminal.wait_frame(ID_PREFIX + b'0:state=clear')
+    test.report(b'state=clear:id=build/test')
+    terminal.wait_frame(ID_PREFIX + b'0/build/test:state=clear')
     split = test.new_pane()
-    test.report(b'state=clear', split)
-    terminal.wait_frame(ID_PREFIX + split[0][1:].encode()
-        + b':state=clear')
+    test.report(b'state=clear:id=test')
+    test.report(b'state=clear:id=test', split)
+    terminal.wait_frame(ID_PREFIX + b'0/test:state=clear')
+    terminal.wait_frame(ID_PREFIX + b'1/test:state=clear')
 
 
 def forward_order(test):
     terminal = test.enable_forwarding()
-    test.report(b'state=working')
-    test.report(b'state=working')
-    test.report(b'state=done')
-    terminal.wait_frame(ROOT + b':state=done')
-    assert terminal.frames() == [ROOT + b':state=working',
-        ROOT + b':state=working',
-        ROOT + b':state=done'], terminal.frames()
     terminal.clear_capture()
     test.report(b'state=working')
-    test.report(b'state=error:id=child')
+    test.report(b'state=working')
     test.report(b'state=done')
-    terminal.wait_frame(ROOT + b':state=done')
-    terminal.pump(.1)
-    assert terminal.frames() == [ROOT + b':state=working',
-        ROOT + b':state=done'], terminal.frames()
+    terminal.wait_frame(ID_PREFIX + b'0:state=done')
+    assert terminal.frames() == [ID_PREFIX + b'0:state=working',
+        ID_PREFIX + b'0:state=working',
+        ID_PREFIX + b'0:state=done'], terminal.frames()
 
 
 def local_root(test):
@@ -617,26 +637,22 @@ def local_root(test):
     message = base64.b64encode(b'Hello').decode().encode()
     body = b'state=done:app=tool:msg=' + message
     test.report(body)
-    terminal.wait_frame(ROOT + b':' + body)
+    terminal.wait_frame(ID_PREFIX + b'0:' + body)
     assert test.cmd('display', '-p', '-t', '%0', fmt) == 'done|tool|Hello'
-    # An id-bearing report is blocked locally and forwards nothing, so
-    # the local formats keep the previous root values.
+    # Named child reports are blocked locally but forward.
     test.report(b'state=blocked:id=child')
-    terminal.pump(.3)
-    assert terminal.frames() == [ROOT + b':' + body], \
-        'id-bearing report forwarded or local state changed'
+    terminal.wait_frame(ID_PREFIX + b'0/child:state=blocked')
     assert test.cmd('display', '-p', '-t', '%0', fmt) == 'done|tool|Hello'
-    # Equality suppression and the local clear reset are local only:
-    # identical reports yield outer frames each time.
+    # Equality suppression is local only: identical reports yield outer
+    # frames each time and no local change.
     test.report(body)
     test.report(body)
-    terminal.wait_frame(ROOT + b':' + body)
-    frames = [f for f in terminal.frames() if f == ROOT + b':' + body]
+    terminal.wait_frame(ID_PREFIX + b'0:' + body)
+    frames = [f for f in terminal.frames() if f == ID_PREFIX + b'0:' + body]
     assert len(frames) == 3, frames
     assert test.cmd('display', '-p', '-t', '%0', fmt) == 'done|tool|Hello'
-    terminal.wait_frame(ROOT + b':' + body)
     test.report(b'state=clear')
-    terminal.wait_frame(ROOT + b':state=clear')
+    terminal.wait_frame(ID_PREFIX + b'0:state=clear')
     assert test.cmd('display', '-p', '-t', '%0', fmt) == '||'
     test.first[2].write_bytes(b'')
     test.report(b'?')
@@ -664,11 +680,12 @@ def scope_session(test):
     terminal.support()
     second.support()
     test.cmd('link-window', '-s', 'b:1', '-t', 'a:')
-    linked_frame = (ID_PREFIX + linked[0][1:].encode() + b':state=working')
     test.report(b'state=working', linked)
     for client in (terminal, second):
-        client.wait_frame(linked_frame)
-        assert client.frames().count(linked_frame) == 1, \
+        client.wait_frame(ID_PREFIX + linked[0][1:].encode()
+            + b':state=working')
+        assert client.frames().count(
+            ID_PREFIX + linked[0][1:].encode() + b':state=working') == 1, \
             'linked pane sent more than one copy'
         client.clear_capture()
     test.report(b'state=error', foreign)
@@ -683,25 +700,23 @@ def scope_move(test):
     # still-member scopes keep their records.
     terminal = test.enable_forwarding()
     moved = test.new_pane()
-    moved_id = moved[0][1:].encode()
-    moved_clear = b'state=clear:id=tmux/p' + moved_id
     test.report(b'state=working', moved)
-    terminal.wait_frame(ID_PREFIX + moved_id + b':state=working')
+    terminal.wait_frame(ID_PREFIX + b'1:state=working')
     terminal.clear_capture()
     # Break the pane out into a new window of another session: the old
     # session's client is cleared, the new session keeps the scope for its
     # own clients.
     b_pane = test.new_pane('b', initial=True)
     test.cmd('break-pane', '-a', '-s', moved[0], '-t', 'b:0')
-    terminal.wait_frame(moved_clear)
+    terminal.wait_frame(b'state=clear:id=tmux/p1')
     test.report(b'state=done', moved)
     terminal.pump(.2)
-    assert terminal.frames() == [moved_clear], \
+    assert terminal.frames() == [b'state=clear:id=tmux/p1'], \
         'moved pane still reported to the old client'
     other = Terminal(test, session='b')
     other.support()
     test.report(b'state=error', moved)
-    other.wait_frame(ID_PREFIX + moved_id + b':state=error')
+    other.wait_frame(ID_PREFIX + b'1:state=error')
     # Join it back: the gaining client gets no clear and no replay; a
     # fresh report flows again.
     terminal.clear_capture()
@@ -709,10 +724,10 @@ def scope_move(test):
     test.cmd('join-pane', '-s', moved[0], '-t', 'a:0.0')
     terminal.pump(.2)
     assert terminal.frames() == [], 'join emitted a clear to the gainer'
-    assert other.frames() == [moved_clear], \
-        'join departing client not cleared'
+    assert other.frames() == [b'state=clear:id=tmux/p' +
+        moved[0][1:].encode()], 'join departing client not cleared'
     test.report(b'state=done', moved)
-    terminal.wait_frame(ID_PREFIX + moved_id + b':state=done')
+    terminal.wait_frame(ID_PREFIX + b'1:state=done')
     # Swap panes across sessions: each client is cleared only for the
     # pane it lost; the gained pane keeps its scope and reports flow to
     # its new session's clients only.
@@ -720,29 +735,28 @@ def scope_move(test):
     other.clear_capture()
     test.cmd('swap-pane', '-s', 'a:0.0', '-t', 'b:0.0')
     terminal.wait_frame(b'state=clear:id=tmux/p0')
-    other.wait_frame(b'state=clear:id=tmux/p' + b_pane[0][1:].encode())
+    other.wait_frame(b'state=clear:id=tmux/p2')
     test.report(b'state=done', b_pane)
-    terminal.wait_frame(ID_PREFIX + b_pane[0][1:].encode()
-        + b':state=done')
+    terminal.wait_frame(ID_PREFIX + b'2:state=done')
     test.report(b'state=error')
     other.wait_frame(ID_PREFIX + b'0:state=error')
     # Still-member move: the pane's old window is linked into both
     # sessions, so session b contains the old and the new window and
     # its client keeps the records; session a only loses the pane.
     linked = test.new_pane(window=True)
-    linked_id = linked[0][1:].encode()
     test.cmd('link-window', '-s', 'a:1', '-t', 'b:')
     terminal.clear_capture()
     other.clear_capture()
     test.cmd('join-pane', '-s', linked[0], '-t', 'b:0.0')
-    terminal.wait_frame(b'state=clear:id=tmux/p' + linked_id)
+    terminal.wait_frame(b'state=clear:id=tmux/p' +
+        linked[0][1:].encode())
     other.pump(.2)
     assert other.frames() == [], 'still-member client cleared on move'
     test.report(b'state=done', linked)
-    other.wait_frame(ID_PREFIX + linked_id + b':state=done')
+    other.wait_frame(ID_PREFIX + linked[0][1:].encode() + b':state=done')
     terminal.pump(.2)
-    assert ID_PREFIX + linked_id + b':state=done' not in terminal.raw, \
-        'departing client still received the pane'
+    assert ID_PREFIX + linked[0][1:].encode() + b':state=done' not in \
+        terminal.raw, 'departing client still received the pane'
 
 
 def scope_swap(test):
@@ -814,26 +828,27 @@ def scope_swap(test):
     assert terminal.frames() == [], 'same-session swap cleared records'
     assert other.frames() == [], 'same-session swap cleared records'
     test.report(b'state=done')
-    terminal.wait_frame(ROOT + b':state=done')
+    terminal.wait_frame(ID_PREFIX + b'0:state=done')
 
 
 def scope_switch(test):
     terminal = test.enable_forwarding()
     test.report(b'state=working')
-    terminal.wait_frame(ROOT + b':state=working')
+    terminal.wait_frame(ID_PREFIX + b'0:state=working')
     other = test.new_pane('b', initial=True)
     window = test.new_pane('b', window=True)
+    other_id = other[0][1:].encode()
+    window_id = window[0][1:].encode()
     terminal.clear_capture()
     name = terminal.name
     test.cmd('switch-client', '-c', name, '-t', 'b')
     terminal.wait_frame(b'state=clear:id=tmux')
     test.report(b'state=done', other)
-    terminal.wait_frame(ID_PREFIX + other[0][1:].encode() + b':state=done')
+    terminal.wait_frame(ID_PREFIX + other_id + b':state=done')
     terminal.clear_capture()
     test.cmd('select-window', '-t', 'b:1')
     test.report(b'state=blocked', window)
-    terminal.wait_frame(ID_PREFIX + window[0][1:].encode()
-        + b':state=blocked')
+    terminal.wait_frame(ID_PREFIX + window_id + b':state=blocked')
     assert not any(f == b'state=clear:id=tmux' for f in terminal.frames()), \
         'window selection cleared records'
     # Same-session switch-client (window navigation) is not a session
@@ -843,7 +858,7 @@ def scope_switch(test):
     terminal.pump(.2)
     assert terminal.frames() == [], 'same-session switch cleared records'
     test.report(b'state=done', other)
-    terminal.wait_frame(ID_PREFIX + other[0][1:].encode() + b':state=done')
+    terminal.wait_frame(ID_PREFIX + other_id + b':state=done')
     # A never-supported client gets no unsolicited output on switch or
     # detach, beyond the probe it was sent.
     naive = Terminal(test)
@@ -858,11 +873,11 @@ def scope_switch(test):
 
 
 def lifecycle_destroy(test):
-    # Pane destruction clears its root for every eligible client of the
-    # pane's session. Two confirmed same-session clients must each
+    # Pane destruction clears its subtree for every eligible client of
+    # the pane's session. Two confirmed same-session clients must each
     # receive exactly one copy; this pins the pane-destruction clear's
-    # client loop (the window-departing clear has its own client loop,
-    # pinned by its own groups, not proven here).
+    # client loop only (pane-moved and window-departing have their own
+    # loops, pinned by their own groups, not proven here).
     terminal = test.enable_forwarding()
     other = Terminal(test)
     other.support()
@@ -885,6 +900,8 @@ def lifecycle_destroy(test):
 
 
 def lifecycle_respawn(test):
+    # Respawn keeps the same pane id and clears its subtree without
+    # destroying the pane.
     terminal = test.enable_forwarding()
     test.report(b'state=working')
     terminal.wait_frame(ID_PREFIX + b'0:state=working')
@@ -896,13 +913,13 @@ def lifecycle_respawn(test):
     assert test.cmd('display', '-p', '-t', '%0',
         '#{pane_id} #{pane_dead}') == '%0 0', 'pane destroyed by respawn'
     # The retained pane reports again under the same identity, and an
-    # id-bearing report from it is still rejected.
+    # id-bearing report from it is forwarded as the pane's child, not
+    # dropped.
     test.report(b'state=done')
-    terminal.wait_frame(ROOT + b':state=done')
+    terminal.wait_frame(ID_PREFIX + b'0:state=done')
     terminal.clear_capture()
     test.report(b'state=done:id=after-respawn')
-    terminal.pump(.3)
-    assert terminal.frames() == [], 'id-bearing report after respawn'
+    terminal.wait_frame(ID_PREFIX + b'0/after-respawn:state=done')
 
 
 def lifecycle_unlink(test):
@@ -1034,15 +1051,14 @@ def lifecycle_suspend(test):
     terminal.send(OSC + b'?' + ST)
     terminal.wait_frame(b'state=clear:id=tmux')
     test.report(b'state=done')
-    terminal.wait_frame(ROOT + b':state=done')
-    assert ROOT + b':state=blocked' not in terminal.raw, \
+    terminal.wait_frame(ID_PREFIX + b'0:state=done')
+    assert ID_PREFIX + b'0:state=blocked' not in terminal.raw, \
         'suspended report replayed'
-    # An id-bearing report after the resume re-probe is dropped for the
-    # id rule, not merely withheld by the support gate.
+    # A child report after the resume re-probe still forwards under the
+    # pane's namespace, so the resume restored the rewriting too.
     terminal.clear_capture()
     test.report(b'state=done:id=suspended')
-    terminal.pump(.3)
-    assert terminal.frames() == [], 'id-bearing report after resume'
+    terminal.wait_frame(ID_PREFIX + b'0/suspended:state=done')
 
 
 def lifecycle_disable(test):
@@ -1073,6 +1089,7 @@ def lifecycle_disable(test):
         b'state=clear:id=tmux'], 'disable ordering'
     assert terminal.raw.index(b'\033]52;;ZGVm') < \
         terminal.raw.index(CLEAR_NS), 'unrelated output flushed'
+    # Disabled: reports stop.
     terminal.clear_capture()
     test.report(b'state=working')
     terminal.pump(.2)
@@ -1159,6 +1176,7 @@ def loss_recovery(test):
     terminal.clear_capture()
     force_discard(test, terminal)
     test.report(b'state=error')
+    # Drain: output resumes and the owed clear precedes the next report.
     terminal.pump(1)
     terminal.wait_frame(b'state=clear:id=tmux')
     test.report(b'state=done')
@@ -1264,6 +1282,7 @@ def noreplay(test):
     assert not any(b'state=working' in f or b'state=error' in f or
         b'state=blocked' in f for f in frames), \
         'stale reports replayed on attach'
+    # Only a fresh report flows.
     test.report(b'state=done')
     replacement.wait_frame(ID_PREFIX + b'0:state=done')
 
@@ -1685,7 +1704,7 @@ GROUPS = [
     ('probe-late', probe_late),
     ('probe-notunnel', probe_notunnel),
     ('forward-basic', forward_basic),
-    ('forward-idreject', forward_idreject),
+    ('forward-idrules', forward_idrules),
     ('forward-clear', forward_clear),
     ('forward-order', forward_order),
     ('local-root', local_root),

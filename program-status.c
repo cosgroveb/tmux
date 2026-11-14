@@ -26,17 +26,22 @@
 #include "tmux.h"
 
 /*
- * Transparent OSC 7501 forwarding, root scope only: local root reports are
- * forwarded live to every attached client whose outer terminal supports
- * them. This is transport only: reports are forwarded in arrival order,
- * with no per-ID state, no cache and no replay. The only retained state is
- * bounded per-client bookkeeping (probe, support, namespace ownership and
- * an owed clear), plus the rewrite of an idless root report into the fixed
- * "tmux" namespace at tmux/p<pane>.
- *
- * The local root parser accepts only idless reports, so a report carrying
- * an id key in any form (bare, empty or invalid) forwards nothing either.
+ * Transparent OSC 7501 forwarding. This is transport only: reports are
+ * forwarded live, in arrival order, with no per-ID state, no cache and no
+ * replay. The only retained state is bounded per-client bookkeeping (probe,
+ * support, namespace ownership and an owed clear), plus the ID rewrite into
+ * the fixed "tmux" namespace.
  */
+
+/* ID limits, enforced before and after translation. */
+#define PROGRAM_STATUS_ID_LIMIT 128
+#define PROGRAM_STATUS_SEGMENT_LIMIT 32
+#define PROGRAM_STATUS_LEVELS_LIMIT 8
+/* Characters allowed in an application-supplied ID. */
+#define PROGRAM_STATUS_ID_CHARS \
+	"abcdefghijklmnopqrstuvwxyz" \
+	"ABCDEFGHIJKLMNOPQRSTUVWXYZ" \
+	"0123456789_.+-"
 
 /* Probe and generated control emissions always use ST. */
 #define PROGRAM_STATUS_PROBE "\033]7501;?\033\\"
@@ -119,6 +124,35 @@ program_status_clear_pane(struct client *c, struct window_pane *wp)
 	xsnprintf(buffer, sizeof buffer,
 	    "\033]7501;state=clear:id=tmux/p%u\033\\", wp->id);
 	tty_puts(&c->tty, buffer);
+}
+
+/*
+ * Validate an application-supplied ID: one to eight nonempty
+ * slash-separated segments, each at most 32 bytes from the allowed set,
+ * at most 128 bytes in total.
+ */
+static int
+program_status_valid_id(const char *id)
+{
+	const char	*start = id;
+	size_t		 size, segments = 0;
+
+	if (*id == '\0' || strlen(id) > PROGRAM_STATUS_ID_LIMIT)
+		return (0);
+	for (;;) {
+		size = strcspn(start, "/");
+		if (size == 0 || size > PROGRAM_STATUS_SEGMENT_LIMIT)
+			return (0);
+		if (strspn(start, PROGRAM_STATUS_ID_CHARS) != size)
+			return (0);
+		segments++;
+		if (segments > PROGRAM_STATUS_LEVELS_LIMIT)
+			return (0);
+		if (start[size] == '\0')
+			break;
+		start += size + 1;
+	}
+	return (1);
 }
 
 static void
@@ -483,43 +517,70 @@ program_status_client_reply(struct tty *tty, const char *body)
 }
 
 /*
- * Split one report pair at its first '=' and trim whitespace around the
- * key, the local parser's key conventions, expressed as a range inside the
- * pair rather than a modified copy.
+ * Walk a report body's colon-separated pairs without copying it. Sets
+ * *pair and *plen to the next pair and returns the position to resume
+ * from, or NULL after the last pair. A body ending in ':' yields a
+ * final empty pair, like the local parser's strsep convention.
  */
-static void
-program_status_key_range(const char *pair, size_t plen, const char **key,
-    size_t *keylen)
+static const char *
+program_status_next_pair(const char *rest, const char **pair, size_t *plen)
 {
-	const char	*eq, *ke;
-
-	eq = memchr(pair, '=', plen);
-	ke = eq == NULL ? pair + plen : eq;
-	while (pair < ke && isspace((u_char)*pair))
-		pair++;
-	while (ke > pair && isspace((u_char)ke[-1]))
-		ke--;
-	*key = pair;
-	*keylen = ke - pair;
+	*pair = rest;
+	*plen = strcspn(rest, ":");
+	if (rest[*plen] == '\0')
+		return (NULL);
+	return (rest + *plen + 1);
 }
 
-/* Does this report body carry an id pair in any form? */
+/*
+ * Split one pair at its first '=' and trim whitespace around the key
+ * and the value, the local parser's pair conventions, expressed as
+ * ranges inside the pair rather than modified copies. Returns 0 when
+ * the pair has no '='; the value range is then empty.
+ */
 static int
-program_status_body_has_id(const char *body)
+program_status_pair_split(const char *pair, size_t plen,
+    const char **key, size_t *keylen, const char **value, size_t *valuelen)
 {
-	const char	*key, *rest = body;
-	size_t		 plen, keylen;
+	const char	*eq, *kb, *ke, *vb, *ve;
 
-	/* An empty body is one empty pair, like the local strsep loop. */
-	for (;;) {
-		plen = strcspn(rest, ":");
-		program_status_key_range(rest, plen, &key, &keylen);
-		if (keylen == 2 && memcmp(key, "id", 2) == 0)
-			return (1);
-		if (rest[plen] == '\0')
-			return (0);
-		rest += plen + 1;
-	}
+	eq = memchr(pair, '=', plen);
+	kb = pair;
+	ke = eq == NULL ? pair + plen : eq;
+	vb = eq == NULL ? pair + plen : eq + 1;
+	ve = pair + plen;
+	while (kb < ke && isspace((u_char)*kb))
+		kb++;
+	while (ke > kb && isspace((u_char)ke[-1]))
+		ke--;
+	while (vb < ve && isspace((u_char)*vb))
+		vb++;
+	while (ve > vb && isspace((u_char)ve[-1]))
+		ve--;
+	*key = kb;
+	*keylen = ke - kb;
+	*value = vb;
+	*valuelen = ve - vb;
+	return (eq != NULL);
+}
+
+/* Is this key the id field under those conventions? */
+static int
+program_status_key_is_id(const char *key, size_t keylen)
+{
+	return (keylen == 2 && memcmp(key, "id", 2) == 0);
+}
+
+/* Is this pair an id field under those conventions? */
+static int
+program_status_pair_is_id(const char *pair, size_t plen)
+{
+	const char	*key, *value;
+	size_t		keylen, valuelen;
+
+	program_status_pair_split(pair, plen, &key, &keylen, &value,
+	    &valuelen);
+	return (program_status_key_is_id(key, keylen));
 }
 
 /*
@@ -528,18 +589,18 @@ program_status_body_has_id(const char *body)
  * input.c maps its private terminator enum to this boolean at the call
  * boundary. The forwarder runs independently of local acceptance in
  * input_program_status().
- *
- * Only root scope is forwarded in this stage: a body carrying an id pair
- * of any form (bare, empty or invalid) is dropped whole rather than
- * reinterpreted.
  */
 void
 program_status_forward(struct window_pane *wp, const char *body, int bel)
 {
-	char		 translated[32];
+	char		 translated[160];
+	char		 idbuf[PROGRAM_STATUS_ID_LIMIT + 1];
 	char		*frame;
-	const char	*terminator;
-	size_t		 size, termlen, bodylen, tlen;
+	const char	*p, *pair, *key, *value, *terminator;
+	size_t		 size, off, tlen, plen, keylen, valuelen;
+	size_t		 termlen;
+	size_t		 idlen = 0, outlen = 0;
+	int		 split;
 	struct client	*c;
 
 	if (wp == NULL)
@@ -559,29 +620,83 @@ program_status_forward(struct window_pane *wp, const char *body, int bel)
 	 */
 	terminator = bel ? "\007" : "\033\\";
 	termlen = strlen(terminator);
-	bodylen = strlen(body);
-	if (bodylen + 7 + termlen > PROGRAM_STATUS_FRAME_LIMIT)
-		return;
-
-	/* Root scope only: any id pair drops the whole report. */
-	if (program_status_body_has_id(body))
+	if (strlen(body) + 7 + termlen > PROGRAM_STATUS_FRAME_LIMIT)
 		return;
 
 	/*
-	 * Rebuild the frame: the translated root identity, then the body
-	 * verbatim. The identity is bounded by the pane id, so the exact
-	 * size is known before the only allocation and nothing is truncated.
+	 * Scan the body once, without copying it, with the local parser's
+	 * pair conventions: any bare or invalid id value drops the whole
+	 * report, valid duplicates keep the last value, and every non-ID
+	 * pair is only measured here, for the exact frame size. The last
+	 * valid id stays in the bounded buffer; it is never empty, so its
+	 * length doubles as its presence.
 	 */
-	xsnprintf(translated, sizeof translated, "tmux/p%u", wp->id);
+	p = body;
+	do {
+		p = program_status_next_pair(p, &pair, &plen);
+		split = program_status_pair_split(pair, plen, &key, &keylen,
+		    &value, &valuelen);
+		if (program_status_key_is_id(key, keylen)) {
+			/* A bare id without '=' invalidates the report. */
+			if (!split)
+				return;
+			if (valuelen > PROGRAM_STATUS_ID_LIMIT)
+				return;
+			memcpy(idbuf, value, valuelen);
+			idbuf[valuelen] = '\0';
+			if (!program_status_valid_id(idbuf))
+				return;
+			idlen = valuelen;
+			continue;
+		}
+		outlen += 1 + plen;
+	} while (p != NULL);
+
+	/*
+	 * Translate the identity into the fixed namespace: root reports map
+	 * to tmux/p<pane>, child reports to tmux/p<pane>/<id>.
+	 */
+	if (idlen == 0)
+		xsnprintf(translated, sizeof translated, "tmux/p%u", wp->id);
+	else
+		xsnprintf(translated, sizeof translated, "tmux/p%u/%s",
+		    wp->id, idbuf);
+
+	/*
+	 * Re-enforce the ID limits after translation: a pane-rooted child ID
+	 * can exceed limits the original did not.
+	 */
+	if (!program_status_valid_id(translated))
+		return;
+
+	/*
+	 * Rebuild the frame: the translated id first, then every non-ID
+	 * pair verbatim and in order, including unknown keys. The size is
+	 * exact from the scan above, so the rewritten frame bound is
+	 * checked before the only allocation and nothing is truncated.
+	 */
 	tlen = strlen(translated);
-	size = PROGRAM_STATUS_FWD_PREFIXLEN + tlen + 1 + bodylen + termlen;
+	size = PROGRAM_STATUS_FWD_PREFIXLEN + tlen + outlen + termlen;
 	if (size > PROGRAM_STATUS_FRAME_LIMIT)
 		return;
 
 	frame = xmalloc(size + 1);
-	xsnprintf(frame, size + 1, "%s%s:%s", PROGRAM_STATUS_FWD_PREFIX,
-	    translated, body);
-	memcpy(frame + strlen(frame), terminator, termlen + 1);
+	off = 0;
+	memcpy(frame, PROGRAM_STATUS_FWD_PREFIX,
+	    PROGRAM_STATUS_FWD_PREFIXLEN);
+	off += PROGRAM_STATUS_FWD_PREFIXLEN;
+	memcpy(frame + off, translated, tlen);
+	off += tlen;
+	p = body;
+	do {
+		p = program_status_next_pair(p, &pair, &plen);
+		if (program_status_pair_is_id(pair, plen))
+			continue;
+		frame[off++] = ':';
+		memcpy(frame + off, pair, plen);
+		off += plen;
+	} while (p != NULL);
+	memcpy(frame + off, terminator, termlen + 1);
 
 	/*
 	 * Emit to each eligible client, in this order: the owed namespace
