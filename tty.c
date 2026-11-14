@@ -79,7 +79,6 @@ static void	tty_draw_pane(struct tty *, const struct tty_ctx *, u_int);
 #define TTY_BLOCK_START(tty) (1 + ((tty)->sx * (tty)->sy) * 8)
 #define TTY_BLOCK_STOP(tty) (1 + ((tty)->sx * (tty)->sy) / 8)
 
-#define TTY_QUERY_TIMEOUT 5
 #define TTY_REQUEST_LIMIT 30
 
 static struct tty_style_ctx tty_default_style_ctx = {
@@ -252,6 +251,7 @@ tty_block_maybe(struct tty *tty)
 
 	evbuffer_drain(tty->out, size);
 	c->discarded += size;
+	program_status_client_lost(tty);
 
 	tty->discarded = 0;
 	evtimer_add(&tty->timer, &tv);
@@ -562,6 +562,8 @@ tty_stop_tty(struct tty *tty)
 void
 tty_close(struct tty *tty)
 {
+	program_status_client_stop(tty);
+
 	if (event_initialized(&tty->key_timer))
 		evtimer_del(&tty->key_timer);
 	tty_stop_tty(tty);
@@ -693,6 +695,7 @@ tty_add(struct tty *tty, const char *buf, size_t len)
 
 	if (tty->flags & TTY_BLOCK) {
 		tty->discarded += len;
+		program_status_client_lost(tty);
 		return;
 	}
 

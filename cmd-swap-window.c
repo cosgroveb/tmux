@@ -69,8 +69,19 @@ cmd_swap_window_exec(struct cmd *self, struct cmdq_item *item)
 		return (CMD_RETURN_NORMAL);
 
 	w_dst = wl_dst->window;
-	TAILQ_REMOVE(&w_dst->winlinks, wl_dst, wentry);
 	w_src = wl_src->window;
+
+	/*
+	 * A cross-session swap moves each window out of its session with
+	 * no window-unlinked event, so departing scopes are cleared
+	 * before the winlinks are reassigned.
+	 */
+	if (src != dst) {
+		program_status_window_departing(src, w_src);
+		program_status_window_departing(dst, w_dst);
+	}
+
+	TAILQ_REMOVE(&w_dst->winlinks, wl_dst, wentry);
 	TAILQ_REMOVE(&w_src->winlinks, wl_src, wentry);
 
 	wl_dst->window = w_src;

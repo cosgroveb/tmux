@@ -1418,6 +1418,10 @@ options_push_changes(const char *name)
 	    strcmp(name, "status-interval") == 0 ||
 	    strcmp(name, "side-status") == 0)
 		status_timer_start_all();
+	if (strcmp(name, "forward-program-status") == 0) {
+		TAILQ_FOREACH(loop, &clients, entry)
+			program_status_client_sync(loop);
+	}
 	if (strcmp(name, "status") == 0 ||
 	    strcmp(name, "status-position") == 0 ||
 	    strcmp(name, "side-status") == 0 ||
