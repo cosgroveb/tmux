@@ -68,6 +68,7 @@ struct options;
 struct options_array_item;
 struct options_entry;
 struct prompt;
+struct program_status_client;
 struct window_pane_prompt;
 struct redraw_scene;
 struct redraw_span;
@@ -1759,12 +1760,18 @@ struct tty_style_ctx {
 	struct hyperlinks	*hyperlinks;
 };
 
+/* Timeout for terminal queries without a reply. */
+#define TTY_QUERY_TIMEOUT 5
+/* Frame bound for OSC 7501 forwarded and received sequences. */
+#define PROGRAM_STATUS_FRAME_LIMIT 4096
+
 /* Client terminal. */
 struct tty {
 	struct client	*client;
 	struct event	 start_timer;
 	struct event	 clipboard_timer;
 	time_t		 last_requests;
+	time_t		 program_status_discard_until;
 
 	u_int		 sx;
 	u_int		 sy;
@@ -2270,6 +2277,7 @@ struct client {
 	enum client_theme	 theme;
 
 	struct input_requests	 input_requests;
+	struct program_status_client	*program_status;
 
 #define CLIENT_TERMINAL 0x1
 #define CLIENT_LOGIN 0x2
@@ -3011,6 +3019,22 @@ void	tty_draw_images(struct client *, struct window_pane *);
 #endif
 void	tty_cmd_syncstart(struct tty *, const struct tty_ctx *);
 void	tty_default_colours(struct grid_cell *, struct window_pane *, u_int *);
+
+/* program-status.c */
+void	program_status_forward(struct window_pane *, const char *, int);
+void	program_status_client_sync(struct client *);
+void	program_status_client_switch(struct client *, struct session *);
+void	program_status_client_suspend(struct client *);
+void	program_status_client_lock(struct client *);
+void	program_status_client_session_destroying(struct client *);
+void	program_status_client_server_exiting(struct client *);
+void	program_status_client_lost(struct tty *);
+void	program_status_client_stop(struct tty *);
+void	program_status_client_reply(struct tty *, const char *);
+int	program_status_client_pending(struct client *);
+void	program_status_pane_cleared(struct window_pane *);
+void	program_status_window_departing(struct session *, struct window *);
+void	program_status_build_events(void);
 
 /* tty-term.c */
 extern struct tty_terms tty_terms;
