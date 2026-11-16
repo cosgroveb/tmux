@@ -639,9 +639,13 @@ def local_root(test):
     test.report(body)
     terminal.wait_frame(ID_PREFIX + b'0:' + body)
     assert test.cmd('display', '-p', '-t', '%0', fmt) == 'done|tool|Hello'
-    # Named child reports are blocked locally but forward.
+    # A named child report is retained locally, selects itself and
+    # forwards unchanged.
     test.report(b'state=blocked:id=child')
     terminal.wait_frame(ID_PREFIX + b'0/child:state=blocked')
+    assert test.cmd('display', '-p', '-t', '%0', fmt) == 'blocked||'
+    # A repeated root report re-selects the root record locally.
+    test.report(body)
     assert test.cmd('display', '-p', '-t', '%0', fmt) == 'done|tool|Hello'
     # Equality suppression is local only: identical reports yield outer
     # frames each time and no local change.
@@ -649,7 +653,7 @@ def local_root(test):
     test.report(body)
     terminal.wait_frame(ID_PREFIX + b'0:' + body)
     frames = [f for f in terminal.frames() if f == ID_PREFIX + b'0:' + body]
-    assert len(frames) == 3, frames
+    assert len(frames) == 4, frames
     assert test.cmd('display', '-p', '-t', '%0', fmt) == 'done|tool|Hello'
     test.report(b'state=clear')
     terminal.wait_frame(ID_PREFIX + b'0:state=clear')

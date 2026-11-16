@@ -1423,7 +1423,7 @@ input_esc_dispatch(struct input_ctx *ictx)
 
 	switch (entry->type) {
 	case INPUT_ESC_RIS:
-		if (ictx->wp != NULL && ictx->wp->program_state != NULL) {
+		if (ictx->wp != NULL && ictx->wp->program_status != NULL) {
 			window_pane_clear_program_status(ictx->wp, 1);
 			server_status_window(ictx->wp->window);
 			server_redraw_window_borders(ictx->wp->window);
@@ -2828,13 +2828,37 @@ input_program_message(const char *value)
 	return (clean_name(decoded, 1));
 }
 
-/* Parse program status. */
+/* Validate a slash-separated program identifier. */
+static int
+input_program_id(const char *id)
+{
+	size_t	 len, depth = 0;
+
+	if (strlen(id) > 128)
+		return (0);
+	for (;;) {
+		len = strspn(id, "abcdefghijklmnopqrstuvwxyz"
+		    "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.+-");
+		if (len == 0 || len > 32 || ++depth > 8)
+			return (0);
+		id += len;
+		if (*id == '\0')
+			return (1);
+		if (*id++ != '/')
+			return (0);
+	}
+}
+
+/* Validate and replace a program status report. */
 static void
 input_program_status(struct window_pane *wp, const char *p)
 {
-	char	*copy, *next, *key, *value, *end, *state = NULL, *name = NULL;
-	char	*message = NULL;
-	int	 changed = 0;
+	char			*copy, *next, *key, *value, *end;
+	char			*state = NULL, *name = NULL, *message = NULL;
+	char			*id = NULL;
+	struct program_status	 proposed = { 0 }, empty = { 0 };
+	struct program_status	*target, *selected, *old;
+	int			 clear, changed;
 
 	copy = next = xstrdup(p);
 	while ((value = strsep(&next, ":")) != NULL) {
@@ -2844,21 +2868,23 @@ input_program_status(struct window_pane *wp, const char *p)
 		end = key + strlen(key);
 		while (end > key && isspace((u_char)end[-1]))
 			*--end = '\0';
-		if (strcmp(key, "id") == 0)
-			goto out;
-		if (value == NULL)
+		if (value == NULL) {
+			if (strcmp(key, "id") == 0)
+				goto out;
 			continue;
-
+		}
 		while (isspace((u_char)*value))
 			value++;
 		end = value + strlen(value);
 		while (end > value && isspace((u_char)end[-1]))
 			*--end = '\0';
-
-		if (strcmp(key, "state") == 0) {
-			free(state);
-			state = xstrdup(value);
-		} else if (strcmp(key, "app") == 0) {
+		if (strcmp(key, "id") == 0) {
+			if (!input_program_id(value))
+				goto out;
+			id = value;
+		} else if (strcmp(key, "state") == 0)
+			state = value;
+		else if (strcmp(key, "app") == 0) {
 			if (strlen(value) > 32)
 				goto out;
 			free(name);
@@ -2880,56 +2906,62 @@ input_program_status(struct window_pane *wp, const char *p)
 	    strcmp(state, "error") != 0 &&
 	    strcmp(state, "clear") != 0)
 		goto out;
+	clear = (strcmp(state, "clear") == 0);
+	old = wp->program_status;
+	target = id == NULL ? &wp->program_root : &wp->program_named;
+	selected = old;
+	if (!clear) {
+		proposed.state = state;
+		proposed.name = name;
+		proposed.message = message;
+		selected = &proposed;
+	} else if (id == NULL)
+		selected = NULL;
+	else if (target->id != NULL && strncmp(target->id, id, strlen(id)) == 0 &&
+	    (target->id[strlen(id)] == '\0' || target->id[strlen(id)] == '/')) {
+		if (old == target)
+			selected = wp->program_root.state == NULL ? NULL : &wp->program_root;
+	} else
+		goto out;
 
-	if (strcmp(state, "clear") == 0) {
-		free(state);
-		state = NULL;
-		free(name);
-		name = NULL;
-		free(message);
-		message = NULL;
-	}
-
-	if (state != NULL && wp->program_state == NULL)
-		changed = 1;
-	else if (state == NULL && wp->program_state != NULL)
-		changed = 1;
-	else if (state != NULL && strcmp(state, wp->program_state) != 0)
-		changed = 1;
-	if (name != NULL && wp->program_name == NULL)
-		changed = 1;
-	else if (name == NULL && wp->program_name != NULL)
-		changed = 1;
-	else if (name != NULL && strcmp(name, wp->program_name) != 0)
-		changed = 1;
-	if (message != NULL && wp->program_message == NULL)
-		changed = 1;
-	else if (message == NULL && wp->program_message != NULL)
-		changed = 1;
-	else if (message != NULL && strcmp(message, wp->program_message) != 0)
-		changed = 1;
-	if (changed) {
+	if (old == NULL)
+		old = &empty;
+	if (selected == NULL)
+		selected = &empty;
+	changed = (old->state == NULL) != (selected->state == NULL) ||
+	    (old->state != NULL && selected->state != NULL &&
+	    strcmp(old->state, selected->state) != 0) ||
+	    (old->name == NULL) != (selected->name == NULL) ||
+	    (old->name != NULL && selected->name != NULL &&
+	    strcmp(old->name, selected->name) != 0) ||
+	    (old->message == NULL) != (selected->message == NULL) ||
+	    (old->message != NULL && selected->message != NULL &&
+	    strcmp(old->message, selected->message) != 0);
+	if (clear && id == NULL)
 		window_pane_clear_program_status(wp, 1);
-
-		wp->program_state = state;
-		state = NULL;
-		wp->program_name = name;
-		name = NULL;
-		wp->program_message = message;
-		message = NULL;
-
+	else if (clear) {
+		program_status_free(target);
+		wp->program_status = selected == &empty ? NULL : selected;
+	} else {
+		program_status_free(target);
+		target->id = id == NULL ? NULL : xstrdup(id);
+		target->state = xstrdup(state);
+		target->name = name;
+		target->message = message;
+		name = message = NULL;
+		wp->program_status = target;
+	}
+	if (changed) {
 		server_status_window(wp->window);
 		server_redraw_window_borders(wp->window);
 	}
-
 out:
-	free(state);
 	free(name);
 	free(message);
 	free(copy);
 }
 
-/* Handle the OSC 7501 sequence for root program status. */
+/* Handle the OSC 7501 sequence for program status. */
 static void
 input_osc_7501(struct input_ctx *ictx, const char *p)
 {
@@ -3563,7 +3595,7 @@ input_osc_133(struct input_ctx *ictx, const char *p)
 			gl->flags |= GRID_LINE_START_PROMPT;
 		}
 		if (wp != NULL) {
-			if (*p == 'A' && wp->program_state != NULL) {
+			if (*p == 'A' && wp->program_status != NULL) {
 				window_pane_clear_program_status(wp, 0);
 				server_status_window(wp->window);
 				server_redraw_window_borders(wp->window);

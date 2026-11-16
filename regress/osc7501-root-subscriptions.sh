@@ -67,6 +67,17 @@ attach
 changed '||'
 emit 'state=working:app=clnkr:msg=aGVsbG8=' 'working|clnkr|hello'
 changed 'working|clnkr|hello'
+emit 'state=done:id=child:app=named' 'done|named|'
+changed 'done|named|'
+: >"$OUT"
+emit 'state=working:app=clnkr:msg=aGVsbG8=' 'working|clnkr|hello'
+changed 'working|clnkr|hello'
+: >"$OUT"
+emit 'state=done:id=child:app=named' 'done|named|'
+changed 'done|named|'
+: >"$OUT"
+emit 'state=clear:id=child' 'working|clnkr|hello'
+changed 'working|clnkr|hello'
 emit 'state=clear' '||'
 # Discard previous notifications so the initial empty snapshot cannot pass.
 : >"$OUT"

@@ -7823,6 +7823,43 @@ The following variables are available, where appropriate:
 .It Li "window_zoomed_flag" Ta "" Ta "1 if window is zoomed"
 .It Li "wrap_flag" Ta "" Ta "Pane wrap flag"
 .El
+.Pp
+.Nm
+retains one root and at most one named OSC 7501 program status record per pane
+and answers its capability query.
+Each accepted report replaces its record's state, application name and decoded
+message and selects it, including repeated reports.
+Omitted fields become empty.
+A named report replaces the previous named record, without inheriting fields
+from the root.
+An ID contains up to eight slash-separated segments of one to 32 ASCII letters,
+digits or
+.Ql _ ,
+.Ql \&. ,
+.Ql +
+or
+.Ql - ,
+and is at most 128 bytes long.
+Invalid IDs reject the report.
+A clear without an ID removes both records; a clear with an ID removes the
+named record only if the ID matches or is a slash-delimited ancestor.
+If the selected named record is removed, the root is selected if present.
+Other fields, including kind, title and progress, are ignored.
+A new shell prompt (OSC 133 A) clears the root record unless it holds a
+completed result (done or error), and preserves the named record.
+A full terminal reset (RIS), a pane respawn and an idless clear remove both
+records.
+A process exiting in a retained dead pane clears the root record unless it
+holds a completed result and preserves the named record.
+Switching screens, a soft reset, moving the pane and detaching clients preserve
+status.
+These records are independent of OSC 9;4 progress.
+When
+.Ic forward-program-status
+is enabled, root reports are forwarded to attached terminals as
+.Ql tmux/p<pane>
+and named reports as
+.Ql tmux/p<pane>/<id> .
 .Sh STYLES
 .Nm
 offers various options to specify the colour and attributes of aspects of the

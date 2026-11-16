@@ -1988,21 +1988,41 @@ window_pane_set_prompt(struct window_pane *wp, struct client *c,
 	window_fire_pane_prompt("pane-prompt-opened", wp, type);
 }
 
-/* Clear program status. */
+/* Free a retained program status. */
+void
+program_status_free(struct program_status *ps)
+{
+	free(ps->id);
+	free(ps->state);
+	free(ps->name);
+	free(ps->message);
+	memset(ps, 0, sizeof *ps);
+}
+
+/*
+ * Clear the retained program statuses. A prompt (!all) clears the root
+ * record unless it holds a completed result, and preserves the named
+ * record; a full clear (RIS, respawn, pane destruction) removes both.
+ * The selection follows the surviving records.
+ */
 void
 window_pane_clear_program_status(struct window_pane *wp, int all)
 {
-	if (!all && wp->program_state != NULL) {
-		if (strcmp(wp->program_state, "done") == 0 ||
-		    strcmp(wp->program_state, "error") == 0)
+	struct program_status	*selected = wp->program_status;
+
+	if (!all && wp->program_root.state != NULL) {
+		if (strcmp(wp->program_root.state, "done") == 0 ||
+		    strcmp(wp->program_root.state, "error") == 0)
 			return;
 	}
-	free(wp->program_state);
-	free(wp->program_name);
-	free(wp->program_message);
-	wp->program_state = NULL;
-	wp->program_name = NULL;
-	wp->program_message = NULL;
+	if (all)
+		program_status_free(&wp->program_named);
+	program_status_free(&wp->program_root);
+	if (selected == &wp->program_root || selected == NULL) {
+		wp->program_status = (!all && wp->program_named.state != NULL) ?
+		    &wp->program_named : NULL;
+	} else if (all)
+		wp->program_status = NULL;
 }
 
 /* Close a pane prompt. */
