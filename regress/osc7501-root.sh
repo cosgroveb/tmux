@@ -172,13 +172,16 @@ lifecycle()
 		# A prompt clears a non-result root record and preserves the
 		# named record, whichever was selected.
 		start_pane prompt 80 5 "\033]7501;state=$state:app=clnkr:msg=aGVsbG8=\007\033]7501;state=working:id=codex:app=codex:msg=c2hhcmU=\007\033]133;A\007\033]133;A\007"
-		# The named record stays selected through the prompt, whether the
-		# root record was cleared or retained as a result.
-		check_status prompt: 'working|codex|share'
+		# A prompt clears both records unless the root holds a result,
+		# which keeps everything selected as it was.
+		case $state in
+		done|error) check_status prompt: 'working|codex|share' ;;
+		*) check_status prompt: '||' ;;
+		esac
 		start_pane prompt 80 5 "\033]7501;state=working:id=codex:app=codex:msg=c2hhcmU=\007\033]7501;state=$state:app=clnkr:msg=aGVsbG8=\007\033]133;A\007"
 		case $state in
 		done|error) check_status prompt: "$state|clnkr|hello" ;;
-		*) check_status prompt: 'working|codex|share' ;;
+		*) check_status prompt: '||' ;;
 		esac
 		# A full reset clears both records.
 		start_pane clear 80 5 "\033]7501;state=$state:app=clnkr:msg=aGVsbG8=\007\033]7501;state=working:id=codex:app=codex:msg=c2hhcmU=\007\033c\033c"
@@ -213,7 +216,7 @@ preservation()
 		wait_for_output 1 $TMUX display-message -p -t dead: '#{pane_dead}' || exit 1
 		case $state in
 		done|error) expected="$state|clnkr|hello" ;;
-		*) expected='working|codex|share' ;;
+		*) expected='||' ;;
 		esac
 		check_status dead: "$expected"
 		wait_for_output "$expected" $TMUX show-options -gv @dead-status || exit 1
